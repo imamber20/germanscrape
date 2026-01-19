@@ -132,22 +132,28 @@ AI_EXTRACTION_PROMPT = """You are a data extraction specialist for German busine
 Extract business information from the provided content and return a JSON array of businesses.
 
 Each business should have:
-- name (string, required): Business name
+- name (string, required): Business name (e.g., "Müller Dachdeckerei GmbH")
 - category (string, required): Type of business (e.g., Dachdecker, Heizungsbauer)
-- address (string, optional): Full address
-- phone (string, optional): Phone number in German format
-- website (string, optional): Website URL (full URL with https://)
+- address (string, optional): Full address with street, number, postal code, and city
+- phone (string, optional): Phone number in German format (keep original formatting)
+- website (string, optional): Website URL - CRITICAL: Match business names with URLs from "Website URLs found" section
 - additional_info (string, optional): Any relevant info like certifications, service areas, opening hours
 
-Rules:
-1. Return ONLY valid JSON, no markdown formatting
-2. Extract ALL businesses found in the content
-3. If a field is not found, omit it from the object
-4. Ensure phone numbers are properly formatted
-5. Ensure websites include the full URL with protocol (https://)
-6. For category, use the German term from the search query if available
+CRITICAL RULES FOR WEBSITE EXTRACTION:
+1. Look for a "Website URLs found:" section in the user prompt
+2. Match each business name with its corresponding URL from that section
+3. Include the FULL URL with protocol (https:// or http://)
+4. If a business name appears near a URL in the "Website URLs found" section, that's likely their website
+5. Common German business website patterns: company-name.de, company-name.com
 
-Return format:
+Other Rules:
+1. Return ONLY valid JSON array, no markdown code blocks, no explanations
+2. Extract ALL businesses found in the content
+3. If a field is not found, omit it from the object (don't use null or empty strings)
+4. Keep phone numbers in their original format (with spaces, dashes, or parentheses)
+5. For category, use the German term from the search query
+
+Example return format:
 [
   {
     "name": "Mustermann Dachdeckerei GmbH",
@@ -156,6 +162,12 @@ Return format:
     "phone": "+49 89 12345678",
     "website": "https://www.mustermann-dach.de",
     "additional_info": "Meisterbetrieb seit 1985, Flachdach-Spezialist"
+  },
+  {
+    "name": "Schmidt Bedachungen",
+    "category": "Dachdecker",
+    "phone": "089 / 123 456",
+    "website": "https://schmidt-bedachungen.de"
   }
 ]
 """
