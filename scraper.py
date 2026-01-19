@@ -206,6 +206,11 @@ class LeadsScraper:
             # Get page content
             html_content = await page.content()
 
+            # DEBUG: Save HTML to file for inspection
+            debug_file = Path('output') / f'debug_html_{keyword}_{city}.html'
+            debug_file.write_text(html_content, encoding='utf-8')
+            self.logger.debug(f"Saved HTML to {debug_file} for debugging")
+
             # Close page
             await page.close()
 
@@ -278,14 +283,21 @@ class LeadsScraper:
         business_data = []
 
         # For Gelbe Seiten, extract business listings with their websites
-        for article in soup.find_all(['article', 'div'], class_=lambda x: x and ('gs-card' in x or 'mod-Treffer' in x or 'entry' in x or 'teilnehmer' in str(x).lower())):
+        # Enhanced article selector with more patterns
+        article_patterns = ['gs-card', 'mod-treffer', 'entry', 'teilnehmer', 'listing', 'result-item', 'business-card']
+        articles_found = soup.find_all(['article', 'div'], class_=lambda x: x and any(pattern in str(x).lower() for pattern in article_patterns))
+
+        self.logger.debug(f"Found {len(articles_found)} article elements matching patterns: {article_patterns}")
+
+        for article in articles_found:
             business_name = None
             website_url = None
+            website_strategy = None
             phone = None
             address = None
 
             # Try to find business name (multiple strategies)
-            name_elem = article.find(['h2', 'h3'], class_=lambda x: x and any(c in str(x).lower() for c in ['name', 'title', 'headline', 'h2']))
+            name_elem = article.find(['h2', 'h3', 'h1'], class_=lambda x: x and any(c in str(x).lower() for c in ['name', 'title', 'headline', 'heading']))
             if not name_elem:
                 # Try finding it in links
                 name_link = article.find('a', class_=lambda x: x and 'link-name' in str(x).lower())
@@ -298,33 +310,106 @@ class LeadsScraper:
             # Try to find website link (multiple strategies)
             # Strategy 1: Look for link with "website" or "webseite" text
             web_link = article.find('a', href=True, string=lambda x: x and ('webseite' in x.lower() or 'website' in x.lower() or 'homepage' in x.lower()))
+            if web_link and web_link.get('href'):
+                href = web_link['href']
+                if href.startswith('http') and 'gelbeseiten.de' not in href:
+                    website_url = href
+                    website_strategy = "Strategy 1: Link text"
 
             # Strategy 2: Look for link with website/homepage in class
-            if not web_link:
+            if not website_url:
                 web_link = article.find('a', href=True, class_=lambda x: x and any(c in str(x).lower() for c in ['website', 'homepage', 'webseite', 'link-website']))
+                if web_link and web_link.get('href'):
+                    href = web_link['href']
+                    if href.startswith('http') and 'gelbeseiten.de' not in href:
+                        website_url = href
+                        website_strategy = "Strategy 2: Link class"
 
             # Strategy 3: Look for any link in a div/button with website-related class
-            if not web_link:
+            if not website_url:
                 website_container = article.find(['div', 'button', 'span'], class_=lambda x: x and any(c in str(x).lower() for c in ['website', 'webseite', 'homepage']))
                 if website_container:
                     web_link = website_container.find('a', href=True)
+                    if web_link and web_link.get('href'):
+                        href = web_link['href']
+                        if href.startswith('http') and 'gelbeseiten.de' not in href:
+                            website_url = href
+                            website_strategy = "Strategy 3: Container"
 
-            # Strategy 4: Look for data attributes
-            if not web_link:
-                web_link = article.find('a', attrs={'data-link-type': lambda x: x and 'website' in str(x).lower()})
+            # Strategy 4: Look for data attributes on any element (not just links)
+            if not website_url:
+                # Check all common data attribute patterns
+                data_patterns = ['data-href', 'data-url', 'data-website', 'data-link', 'data-website-url', 'data-target-url']
+                for pattern in data_patterns:
+                    elem = article.find(attrs={pattern: True})
+                    if elem and elem.get(pattern):
+                        potential_url = elem.get(pattern)
+                        if potential_url and potential_url.startswith('http') and 'gelbeseiten.de' not in potential_url:
+                            website_url = potential_url
+                            website_strategy = f"Strategy 4: Data attribute ({pattern})"
+                            break
 
-            if web_link and web_link.get('href'):
-                href = web_link['href']
-                # Filter out internal Gelbe Seiten links
-                if href.startswith('http') and 'gelbeseiten.de' not in href:
-                    website_url = href
+            # Strategy 5: Look for button elements with data attributes
+            if not website_url:
+                buttons = article.find_all(['button', 'a', 'div'], attrs={'class': True})
+                for button in buttons:
+                    # Check if button text suggests it's a website link
+                    button_text = button.get_text(strip=True).lower()
+                    if any(word in button_text for word in ['webseite', 'website', 'homepage']):
+                        # Look for data attributes
+                        for attr, value in button.attrs.items():
+                            if attr.startswith('data-') and isinstance(value, str) and value.startswith('http'):
+                                if 'gelbeseiten.de' not in value:
+                                    website_url = value
+                                    website_strategy = f"Strategy 5: Button data ({attr})"
+                                    break
+                        if website_url:
+                            break
+
+            # Strategy 6: Check onclick handlers for URLs
+            if not website_url:
+                onclick_elems = article.find_all(attrs={'onclick': True})
+                for elem in onclick_elems:
+                    onclick = elem.get('onclick', '')
+                    # Look for URLs in onclick handlers (e.g., onclick="window.open('https://...')")
+                    url_match = re.search(r'https?://[^\s\'"]+', onclick)
+                    if url_match:
+                        potential_url = url_match.group(0)
+                        if 'gelbeseiten.de' not in potential_url:
+                            website_url = potential_url
+                            website_strategy = "Strategy 6: onclick handler"
+                            break
+
+            # Strategy 7: Last resort - find any external link that looks like a business website
+            if not website_url:
+                all_links = article.find_all('a', href=True)
+                excluded_domains = ['facebook.com', 'instagram.com', 'twitter.com', 'youtube.com',
+                                  'linkedin.com', 'google.com', 'maps.google', 'gelbeseiten.de',
+                                  'apple.com', 'microsoft.com']
+                for link in all_links:
+                    href = link.get('href', '')
+                    if href.startswith('http'):
+                        # Check if it's not an excluded domain
+                        if not any(domain in href.lower() for domain in excluded_domains):
+                            # Check if it looks like a business domain (.de, .com, etc.)
+                            if any(tld in href for tld in ['.de', '.com', '.net', '.eu', '.org']):
+                                website_url = href
+                                website_strategy = "Strategy 7: Generic external link"
+                                break
 
             if business_name and website_url:
-                self.logger.debug(f"Found business-website mapping: {business_name} → {website_url}")
+                self.logger.debug(f"Found business-website mapping ({website_strategy}): {business_name} → {website_url}")
                 business_data.append({
                     'name': business_name,
-                    'website': website_url
+                    'website': website_url,
+                    'extraction_strategy': website_strategy
                 })
+            elif business_name:
+                self.logger.debug(f"Found business without website: {business_name}")
+
+        # Log extraction statistics
+        websites_found = len(business_data)
+        self.logger.info(f"Article extraction complete: {len(articles_found)} articles processed, {websites_found} with websites ({websites_found/len(articles_found)*100:.1f}%)" if articles_found else "No articles found")
 
         # Also extract all links as fallback
         for link in soup.find_all('a', href=True):
