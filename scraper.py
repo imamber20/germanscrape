@@ -193,8 +193,35 @@ class LeadsScraper:
         for script in soup(["script", "style"]):
             script.decompose()
 
-        # Extract all links with their text
+        # Extract all links with their text and context
         links = []
+        business_data = []
+
+        # For Gelbe Seiten, extract business listings with their websites
+        for article in soup.find_all(['article', 'div'], class_=lambda x: x and ('gs-card' in x or 'mod-Treffer' in x or 'entry' in x)):
+            business_name = None
+            website_url = None
+
+            # Try to find business name
+            name_elem = article.find(['h2', 'h3', 'a'], class_=lambda x: x and any(c in str(x) for c in ['name', 'title', 'headline']))
+            if name_elem:
+                business_name = name_elem.get_text(strip=True)
+
+            # Try to find website link
+            web_link = article.find('a', href=True, string=lambda x: x and ('webseite' in x.lower() or 'website' in x.lower() or 'homepage' in x.lower()))
+            if not web_link:
+                web_link = article.find('a', class_=lambda x: x and ('website' in str(x) or 'homepage' in str(x)))
+
+            if web_link and web_link.get('href'):
+                website_url = web_link['href']
+
+            if business_name and website_url:
+                business_data.append({
+                    'name': business_name,
+                    'website': website_url
+                })
+
+        # Also extract all links as fallback
         for link in soup.find_all('a', href=True):
             href = link['href']
             link_text = link.get_text(strip=True)
@@ -205,8 +232,9 @@ class LeadsScraper:
                 if href.startswith('http'):
                     # Skip common non-business domains
                     skip_domains = ['facebook.com', 'instagram.com', 'twitter.com', 'youtube.com',
-                                  'linkedin.com', 'google.com', 'maps.google', 'gelbeseiten.de']
-                    if not any(domain in href for domain in skip_domains):
+                                  'linkedin.com', 'google.com', 'maps.google', 'gelbeseiten.de',
+                                  '/suche/', '/branche/', '/ort/']
+                    if not any(domain in href.lower() for domain in skip_domains):
                         links.append({
                             'url': href,
                             'text': link_text
@@ -217,7 +245,8 @@ class LeadsScraper:
 
         return {
             'text': text,
-            'links': links
+            'links': links,
+            'business_data': business_data
         }
 
     def extract_with_ai(self, html_content: str, category: str, city: str) -> List[Dict[str, Any]]:
@@ -239,6 +268,7 @@ class LeadsScraper:
         parsed = self.parse_html_structure(html_content)
         text = parsed['text']
         links = parsed['links']
+        business_data = parsed['business_data']
 
         # Limit text size to avoid token limits
         max_chars = 6000
@@ -247,24 +277,44 @@ class LeadsScraper:
 
         # Create links section for prompt
         links_text = ""
-        if links:
+
+        # If we have structured business data, use that
+        if business_data:
+            links_text = "\n\nBusiness-Website Mappings (USE THESE):\n"
+            for biz in business_data[:20]:
+                links_text += f"- Business: {biz['name']} → Website: {biz['website']}\n"
+            self.logger.debug(f"Found {len(business_data)} business-website mappings: {business_data[:3]}")
+
+        # Otherwise use all links
+        elif links:
             links_text = "\n\nWebsite URLs found:\n"
             for i, link in enumerate(links[:30]):  # Limit to 30 links
                 links_text += f"- {link['text']}: {link['url']}\n"
+            self.logger.debug(f"URLs found: {[link['url'] for link in links[:10]]}")
 
-        self.logger.info(f"Extracting businesses with AI for {category} in {city} (found {len(links)} potential website links)")
+        self.logger.info(f"Extracting businesses with AI for {category} in {city} (found {len(links)} potential links, {len(business_data)} structured mappings)")
 
         try:
+            # Customize instructions based on what data we have
+            if business_data:
+                instructions = """CRITICAL - USE THE MAPPINGS ABOVE:
+- There is a "Business-Website Mappings" section above with exact name→website pairs
+- For each business you extract, if its name matches or is similar to a name in the mappings, USE THAT WEBSITE
+- Include the website field for businesses that have mappings
+- Extract ALL businesses found in the content"""
+            else:
+                instructions = """IMPORTANT:
+- Match business names from the content with their corresponding website URLs from the "Website URLs found" section
+- Extract ALL businesses found in the content
+- Include the website URL for each business if available"""
+
             user_prompt = f"""Search context: {category} in {city}, Deutschland
 
 Content to extract from:
 {text}
 {links_text}
 
-IMPORTANT:
-- Match business names from the content with their corresponding website URLs from the "Website URLs found" section
-- Extract ALL {category} businesses found in the content
-- Include the website URL for each business if available"""
+{instructions}"""
 
             response = self.openai_client.chat.completions.create(
                 model=SETTINGS['ai_model'],
@@ -282,6 +332,9 @@ IMPORTANT:
             tokens_used = response.usage.total_tokens
             self.logger.debug(f"AI extraction completed. Tokens used: {tokens_used}")
 
+            # Debug: Log raw AI response
+            self.logger.debug(f"AI raw response (first 500 chars): {content[:500]}")
+
             # Parse JSON response
             # Remove markdown code blocks if present
             if content.startswith('```'):
@@ -293,6 +346,13 @@ IMPORTANT:
             if not isinstance(businesses, list):
                 self.logger.warning("AI response is not a list, wrapping in list")
                 businesses = [businesses]
+
+            # Debug: Log sample business with fields
+            if businesses:
+                sample = businesses[0]
+                self.logger.debug(f"Sample business fields: {list(sample.keys())}")
+                if 'website' in sample:
+                    self.logger.debug(f"Sample website value: {sample['website']}")
 
             self.logger.info(f"Extracted {len(businesses)} businesses, {sum(1 for b in businesses if b.get('website'))} with websites")
             self.stats['total_extracted'] += len(businesses)
