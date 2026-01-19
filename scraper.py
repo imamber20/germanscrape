@@ -23,6 +23,7 @@ from openai import OpenAI
 import requests
 from bs4 import BeautifulSoup
 from tqdm import tqdm
+from playwright.async_api import async_playwright, Page, Browser
 
 from config import CATEGORIES, ZIP_RANGES, SETTINGS, AI_EXTRACTION_PROMPT
 
@@ -47,6 +48,10 @@ class LeadsScraper:
         self.max_cities = max_cities
         self.request_delay = SETTINGS['request_delay']
         self.retry_attempts = SETTINGS['retry_attempts']
+
+        # Playwright browser
+        self.playwright = None
+        self.browser = None
 
         # Data storage
         self.all_leads: List[Dict[str, Any]] = []
@@ -139,9 +144,84 @@ class LeadsScraper:
             self.stats['failed_scrapes'] += 1
             return None
 
+    async def init_browser(self):
+        """Initialize Playwright browser"""
+        if not self.playwright:
+            self.logger.info("Initializing Playwright browser...")
+            self.playwright = await async_playwright().start()
+            self.browser = await self.playwright.chromium.launch(
+                headless=True,
+                args=['--disable-blink-features=AutomationControlled']
+            )
+            self.logger.info("Playwright browser initialized")
+
+    async def close_browser(self):
+        """Close Playwright browser"""
+        if self.browser:
+            await self.browser.close()
+        if self.playwright:
+            await self.playwright.stop()
+            self.logger.info("Playwright browser closed")
+
+    async def scrape_gelbeseiten_playwright(self, keyword: str, city: str) -> Optional[str]:
+        """
+        Scrape Gelbe Seiten using Playwright for JavaScript rendering
+
+        Args:
+            keyword: Business category keyword
+            city: City name
+
+        Returns:
+            HTML content or None if failed
+        """
+        query = quote_plus(keyword)
+        location = quote_plus(city)
+        url = f"https://www.gelbeseiten.de/Suche/{query}/{location}"
+
+        self.logger.info(f"Scraping Gelbe Seiten with Playwright: {keyword} in {city}")
+        self.stats['total_scrapes'] += 1
+
+        try:
+            # Ensure browser is initialized
+            await self.init_browser()
+
+            # Create new page
+            page = await self.browser.new_page()
+
+            # Set user agent
+            await page.set_extra_http_headers({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept-Language': 'de-DE,de;q=0.9',
+            })
+
+            # Navigate to page
+            await page.goto(url, wait_until='domcontentloaded', timeout=30000)
+
+            # Wait for business listings to load
+            try:
+                await page.wait_for_selector('article, .mod-Treffer', timeout=5000)
+            except:
+                self.logger.warning("No business listings found on page")
+
+            # Get page content
+            html_content = await page.content()
+
+            # Close page
+            await page.close()
+
+            self.logger.debug(f"Response size: {len(html_content)} bytes")
+            self.stats['successful_scrapes'] += 1
+
+            return html_content
+
+        except Exception as e:
+            self.logger.error(f"Failed to scrape Gelbe Seiten for {keyword} in {city}: {str(e)}")
+            self.stats['failed_scrapes'] += 1
+            return None
+
     def scrape_gelbeseiten(self, keyword: str, city: str) -> Optional[str]:
         """
-        Scrape Gelbe Seiten (German Yellow Pages)
+        Scrape Gelbe Seiten (German Yellow Pages) - Deprecated, use Playwright version
 
         Args:
             keyword: Business category keyword
@@ -198,24 +278,49 @@ class LeadsScraper:
         business_data = []
 
         # For Gelbe Seiten, extract business listings with their websites
-        for article in soup.find_all(['article', 'div'], class_=lambda x: x and ('gs-card' in x or 'mod-Treffer' in x or 'entry' in x)):
+        for article in soup.find_all(['article', 'div'], class_=lambda x: x and ('gs-card' in x or 'mod-Treffer' in x or 'entry' in x or 'teilnehmer' in str(x).lower())):
             business_name = None
             website_url = None
+            phone = None
+            address = None
 
-            # Try to find business name
-            name_elem = article.find(['h2', 'h3', 'a'], class_=lambda x: x and any(c in str(x) for c in ['name', 'title', 'headline']))
+            # Try to find business name (multiple strategies)
+            name_elem = article.find(['h2', 'h3'], class_=lambda x: x and any(c in str(x).lower() for c in ['name', 'title', 'headline', 'h2']))
+            if not name_elem:
+                # Try finding it in links
+                name_link = article.find('a', class_=lambda x: x and 'link-name' in str(x).lower())
+                if name_link:
+                    name_elem = name_link
+
             if name_elem:
                 business_name = name_elem.get_text(strip=True)
 
-            # Try to find website link
+            # Try to find website link (multiple strategies)
+            # Strategy 1: Look for link with "website" or "webseite" text
             web_link = article.find('a', href=True, string=lambda x: x and ('webseite' in x.lower() or 'website' in x.lower() or 'homepage' in x.lower()))
+
+            # Strategy 2: Look for link with website/homepage in class
             if not web_link:
-                web_link = article.find('a', class_=lambda x: x and ('website' in str(x) or 'homepage' in str(x)))
+                web_link = article.find('a', href=True, class_=lambda x: x and any(c in str(x).lower() for c in ['website', 'homepage', 'webseite', 'link-website']))
+
+            # Strategy 3: Look for any link in a div/button with website-related class
+            if not web_link:
+                website_container = article.find(['div', 'button', 'span'], class_=lambda x: x and any(c in str(x).lower() for c in ['website', 'webseite', 'homepage']))
+                if website_container:
+                    web_link = website_container.find('a', href=True)
+
+            # Strategy 4: Look for data attributes
+            if not web_link:
+                web_link = article.find('a', attrs={'data-link-type': lambda x: x and 'website' in str(x).lower()})
 
             if web_link and web_link.get('href'):
-                website_url = web_link['href']
+                href = web_link['href']
+                # Filter out internal Gelbe Seiten links
+                if href.startswith('http') and 'gelbeseiten.de' not in href:
+                    website_url = href
 
             if business_name and website_url:
+                self.logger.debug(f"Found business-website mapping: {business_name} → {website_url}")
                 business_data.append({
                     'name': business_name,
                     'website': website_url
@@ -486,26 +591,27 @@ Content to extract from:
 
         self.logger.info(f"Scraping {category_name} in {city}")
 
-        # Scrape Google Maps
-        google_html = self.scrape_google_maps(keyword, city)
-        if google_html:
-            google_leads = self.extract_with_ai(google_html, category_name, city)
-            for lead in google_leads:
-                enriched = self.enrich_lead(lead, 'google_maps', category_name)
-                leads.append(enriched)
-                self.stats['by_source']['google_maps'] += 1
+        # NOTE: Google Maps scraping disabled - returns compressed binary data
+        # Re-enable if proper decompression is implemented
+        # google_html = self.scrape_google_maps(keyword, city)
+        # if google_html:
+        #     google_leads = self.extract_with_ai(google_html, category_name, city)
+        #     for lead in google_leads:
+        #         enriched = self.enrich_lead(lead, 'google_maps', category_name)
+        #         leads.append(enriched)
+        #         self.stats['by_source']['google_maps'] += 1
 
-        # Delay between requests
-        await asyncio.sleep(self.request_delay)
-
-        # Scrape Gelbe Seiten
-        directory_html = self.scrape_gelbeseiten(keyword, city)
+        # Scrape Gelbe Seiten with Playwright for JavaScript rendering
+        directory_html = await self.scrape_gelbeseiten_playwright(keyword, city)
         if directory_html:
             directory_leads = self.extract_with_ai(directory_html, category_name, city)
             for lead in directory_leads:
                 enriched = self.enrich_lead(lead, 'gelbeseiten', category_name)
                 leads.append(enriched)
                 self.stats['by_source']['directory'] += 1
+
+        # Delay between requests
+        await asyncio.sleep(self.request_delay)
 
         # Update category stats
         if category_name not in self.stats['by_category']:
@@ -577,6 +683,9 @@ Content to extract from:
 
                 if self.max_cities and city_count >= self.max_cities:
                     break
+
+        # Close browser
+        await self.close_browser()
 
         self.logger.info(f"Scraping completed. Total leads collected: {len(self.all_leads)}")
 
