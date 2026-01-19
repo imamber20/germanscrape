@@ -140,11 +140,13 @@ Each business should have:
 - additional_info (string, optional): Any relevant info like certifications, service areas, opening hours
 
 CRITICAL RULES FOR WEBSITE EXTRACTION:
-1. Look for a "Website URLs found:" section in the user prompt
-2. Match each business name with its corresponding URL from that section
-3. Include the FULL URL with protocol (https:// or http://)
-4. If a business name appears near a URL in the "Website URLs found" section, that's likely their website
-5. Common German business website patterns: company-name.de, company-name.com
+1. If you see a "Business-Website Mappings (USE THESE):" section, ALWAYS use those exact mappings
+2. Match business names to the mappings - if a name is similar or the same, USE THAT WEBSITE
+3. If you see "Website URLs found:" section, match business names with their corresponding URLs
+4. Include the FULL URL with protocol (https:// or http://)
+5. If a business name appears near a URL, that's likely their website
+6. Common German business website patterns: company-name.de, company-name.com
+7. ALWAYS include the "website" field if you found a mapping or URL for that business
 
 Other Rules:
 1. Return ONLY valid JSON array, no markdown code blocks, no explanations
