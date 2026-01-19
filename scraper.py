@@ -177,6 +177,49 @@ class LeadsScraper:
             self.stats['failed_scrapes'] += 1
             return None
 
+    def parse_html_structure(self, html_content: str) -> Dict[str, Any]:
+        """
+        Parse HTML to extract structured data including links
+
+        Args:
+            html_content: Raw HTML content
+
+        Returns:
+            Dictionary with text and links
+        """
+        soup = BeautifulSoup(html_content, 'html.parser')
+
+        # Remove script and style elements
+        for script in soup(["script", "style"]):
+            script.decompose()
+
+        # Extract all links with their text
+        links = []
+        for link in soup.find_all('a', href=True):
+            href = link['href']
+            link_text = link.get_text(strip=True)
+
+            # Filter for likely business websites (exclude navigation, social media, etc.)
+            if href and link_text:
+                # Clean up the URL
+                if href.startswith('http'):
+                    # Skip common non-business domains
+                    skip_domains = ['facebook.com', 'instagram.com', 'twitter.com', 'youtube.com',
+                                  'linkedin.com', 'google.com', 'maps.google', 'gelbeseiten.de']
+                    if not any(domain in href for domain in skip_domains):
+                        links.append({
+                            'url': href,
+                            'text': link_text
+                        })
+
+        # Extract text content
+        text = soup.get_text(separator='\n', strip=True)
+
+        return {
+            'text': text,
+            'links': links
+        }
+
     def extract_with_ai(self, html_content: str, category: str, city: str) -> List[Dict[str, Any]]:
         """
         Extract business information using OpenAI
@@ -192,29 +235,36 @@ class LeadsScraper:
         if not html_content:
             return []
 
-        # Clean HTML and extract text
-        soup = BeautifulSoup(html_content, 'html.parser')
-
-        # Remove script and style elements
-        for script in soup(["script", "style"]):
-            script.decompose()
-
-        text = soup.get_text()
+        # Parse HTML structure to get text and links
+        parsed = self.parse_html_structure(html_content)
+        text = parsed['text']
+        links = parsed['links']
 
         # Limit text size to avoid token limits
-        max_chars = 8000
+        max_chars = 6000
         if len(text) > max_chars:
             text = text[:max_chars]
 
-        self.logger.info(f"Extracting businesses with AI for {category} in {city}")
+        # Create links section for prompt
+        links_text = ""
+        if links:
+            links_text = "\n\nWebsite URLs found:\n"
+            for i, link in enumerate(links[:30]):  # Limit to 30 links
+                links_text += f"- {link['text']}: {link['url']}\n"
+
+        self.logger.info(f"Extracting businesses with AI for {category} in {city} (found {len(links)} potential website links)")
 
         try:
             user_prompt = f"""Search context: {category} in {city}, Deutschland
 
 Content to extract from:
 {text}
+{links_text}
 
-Extract all {category} businesses found in the content."""
+IMPORTANT:
+- Match business names from the content with their corresponding website URLs from the "Website URLs found" section
+- Extract ALL {category} businesses found in the content
+- Include the website URL for each business if available"""
 
             response = self.openai_client.chat.completions.create(
                 model=SETTINGS['ai_model'],
@@ -244,7 +294,7 @@ Extract all {category} businesses found in the content."""
                 self.logger.warning("AI response is not a list, wrapping in list")
                 businesses = [businesses]
 
-            self.logger.info(f"Extracted {len(businesses)} businesses")
+            self.logger.info(f"Extracted {len(businesses)} businesses, {sum(1 for b in businesses if b.get('website'))} with websites")
             self.stats['total_extracted'] += len(businesses)
 
             return businesses
@@ -489,10 +539,14 @@ Extract all {category} businesses found in the content."""
         # Create DataFrame
         df = pd.DataFrame(self.all_leads)
 
-        # Reorder columns
+        # Ensure all important columns exist (add empty ones if missing)
         column_order = ['name', 'email', 'website', 'category', 'phone', 'address', 'additional_info', 'source', 'scraped_at']
-        existing_columns = [col for col in column_order if col in df.columns]
-        df = df[existing_columns]
+        for col in column_order:
+            if col not in df.columns:
+                df[col] = ''
+
+        # Reorder columns
+        df = df[column_order]
 
         # Export with UTF-8-BOM encoding for German characters
         df.to_csv(filepath, index=False, encoding='utf-8-sig')
@@ -520,10 +574,14 @@ Extract all {category} businesses found in the content."""
         # Create DataFrame
         df = pd.DataFrame(self.all_leads)
 
-        # Reorder columns
+        # Ensure all important columns exist (add empty ones if missing)
         column_order = ['name', 'email', 'website', 'category', 'phone', 'address', 'additional_info', 'source', 'scraped_at']
-        existing_columns = [col for col in column_order if col in df.columns]
-        df = df[existing_columns]
+        for col in column_order:
+            if col not in df.columns:
+                df[col] = ''
+
+        # Reorder columns
+        df = df[column_order]
 
         # Export to Excel
         df.to_excel(filepath, index=False, engine='openpyxl')
