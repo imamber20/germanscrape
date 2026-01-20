@@ -3,47 +3,57 @@ Configuration file for German Handwerk Leads Scraper
 Contains categories, zip ranges, and application settings
 """
 
-# Business categories with German keywords
+# Business categories with German keywords and Google Places types
 CATEGORIES = {
     'dachdecker': {
         'name': 'Dachdecker',
-        'keywords': ['Dachdecker', 'Dachdeckerei', 'Dachsanierung', 'Dachbau']
+        'keywords': ['Dachdecker', 'Dachdeckerei', 'Dachsanierung', 'Dachbau'],
+        'google_type': 'roofing_contractor'
     },
     'heizungsbauer': {
         'name': 'Heizungsbauer',
-        'keywords': ['Heizungsbauer', 'Heizungsbau', 'Heizungstechnik']
+        'keywords': ['Heizungsbauer', 'Heizungsbau', 'Heizungstechnik'],
+        'google_type': 'plumber'  # Google combines heating and plumbing
     },
     'sanitärinstallateure': {
         'name': 'Sanitärinstallateure',
-        'keywords': ['Sanitärinstallateur', 'Sanitärtechnik', 'Badezimmerbau']
+        'keywords': ['Sanitärinstallateur', 'Sanitärtechnik', 'Badezimmerbau'],
+        'google_type': 'plumber'
     },
     'elektrotechnik': {
         'name': 'Elektrotechnik',
-        'keywords': ['Elektrotechnik', 'Elektroinstallation', 'Elektriker']
+        'keywords': ['Elektrotechnik', 'Elektroinstallation', 'Elektriker'],
+        'google_type': 'electrician'
     },
     'malerbetriebe': {
         'name': 'Malerbetriebe',
-        'keywords': ['Malerbetrieb', 'Malerarbeiten', 'Fassadenanstrich']
+        'keywords': ['Malerbetrieb', 'Malerarbeiten', 'Fassadenanstrich'],
+        'google_type': 'painter'
     },
     'fliesenleger': {
         'name': 'Fliesenleger',
-        'keywords': ['Fliesenleger', 'Fliesenverlegung', 'Badfliesen']
+        'keywords': ['Fliesenleger', 'Fliesenverlegung', 'Badfliesen'],
+        'google_type': 'general_contractor'  # Google doesn't have tile-specific
     },
     'bauunternehmen': {
         'name': 'Bauunternehmen',
-        'keywords': ['Bauunternehmen', 'Baufirma', 'Hochbauunternehmen']
+        'keywords': ['Bauunternehmen', 'Baufirma', 'Hochbauunternehmen'],
+        'google_type': 'general_contractor'
     },
     'trockenbaufirmen': {
         'name': 'Trockenbaufirmen',
-        'keywords': ['Trockenbau', 'Gipskartonbau', 'Innenausbau']
+        'keywords': ['Trockenbau', 'Gipskartonbau', 'Innenausbau'],
+        'google_type': 'general_contractor'
     },
     'zimmereien': {
         'name': 'Zimmereien',
-        'keywords': ['Zimmerei', 'Holzbau', 'Dachstuhlbau']
+        'keywords': ['Zimmerei', 'Holzbau', 'Dachstuhlbau'],
+        'google_type': 'general_contractor'
     },
     'abrissunternehmen': {
         'name': 'Abrissunternehmen',
-        'keywords': ['Abrissunternehmen', 'Abbruchfirma', 'Abbrucharbeiten']
+        'keywords': ['Abrissunternehmen', 'Abbruchfirma', 'Abbrucharbeiten'],
+        'google_type': 'general_contractor'
     }
 }
 
@@ -103,19 +113,21 @@ ZIP_RANGES = {
 
 # Application settings
 SETTINGS = {
+    # Google Places API
+    'google_search_radius': 50000,  # 50km radius for each city search
+    'google_max_results': 60,  # Google Places limit (20 per page, 3 pages max)
+    'google_request_delay': 0.1,  # seconds between API calls (Google allows 100 req/sec)
+
     # Rate limiting
-    'request_delay': 2,  # seconds between requests
+    'request_delay': 1,  # seconds between requests
     'retry_attempts': 3,
     'retry_delay': 2,  # initial retry delay in seconds
 
-    # Scraping limits
-    'max_results_per_search': 20,
-    'timeout': 30,  # seconds
-
-    # AI extraction
+    # AI extraction (for email generation and data filtering)
     'ai_model': 'gpt-4o-mini',
     'ai_temperature': 0.1,
-    'max_tokens': 4000,
+    'max_tokens': 2000,
+    'use_ai_filtering': True,  # Use AI to filter/enhance Google Places results
 
     # Output
     'output_dir': 'output',
@@ -123,53 +135,61 @@ SETTINGS = {
 
     # Data validation
     'required_fields': ['name', 'category'],
-    'optional_fields': ['address', 'phone', 'website', 'email', 'additional_info']
+    'optional_fields': ['address', 'phone', 'website', 'email', 'additional_info'],
+
+    # Cost tracking
+    'google_nearby_search_cost': 0.032,  # $32 per 1000 requests
+    'google_place_details_cost': 0.017,  # $17 per 1000 requests
+    'google_geocoding_cost': 0.005,  # $5 per 1000 requests
 }
 
-# System prompt for AI extraction
-AI_EXTRACTION_PROMPT = """You are a data extraction specialist for German business information.
+# System prompt for AI filtering (Google Places provides clean data already)
+AI_FILTERING_PROMPT = """You are a quality control specialist for German business lead data.
 
-Extract business information from the provided content and return a JSON array of businesses.
+Your task: Filter and validate business leads to ensure they match the target category.
 
-Each business should have:
-- name (string, required): Business name (e.g., "Müller Dachdeckerei GmbH")
-- category (string, required): Type of business (e.g., Dachdecker, Heizungsbauer)
-- address (string, optional): Full address with street, number, postal code, and city
-- phone (string, optional): Phone number in German format (keep original formatting)
-- website (string, optional): Website URL - CRITICAL: Match business names with URLs from "Website URLs found" section
-- additional_info (string, optional): Any relevant info like certifications, service areas, opening hours
+Input: A list of businesses from Google Places API
+Output: Filtered list containing ONLY businesses that match the target category
 
-CRITICAL RULES FOR WEBSITE EXTRACTION:
-1. If you see a "Business-Website Mappings (USE THESE):" section, ALWAYS use those exact mappings
-2. Match business names to the mappings - if a name is similar or the same, USE THAT WEBSITE
-3. If you see "Website URLs found:" section, match business names with their corresponding URLs
-4. Include the FULL URL with protocol (https:// or http://)
-5. If a business name appears near a URL, that's likely their website
-6. Common German business website patterns: company-name.de, company-name.com
-7. ALWAYS include the "website" field if you found a mapping or URL for that business
-
-Other Rules:
+Rules:
 1. Return ONLY valid JSON array, no markdown code blocks, no explanations
-2. Extract ALL businesses found in the content
-3. If a field is not found, omit it from the object (don't use null or empty strings)
-4. Keep phone numbers in their original format (with spaces, dashes, or parentheses)
-5. For category, use the German term from the search query
+2. KEEP businesses that clearly match the category (e.g., keep "Müller Dachdeckerei" for category "Dachdecker")
+3. REMOVE businesses that are:
+   - Suppliers/wholesalers (e.g., "Baustoffhandel", "Großhandel")
+   - Retailers/shops (e.g., "Baumarkt", "Fachhandel")
+   - Manufacturers (e.g., "Hersteller", "Produktion")
+   - Not relevant to the category (e.g., "Restaurant" in Dachdecker search)
+4. KEEP all fields from the input exactly as they are
+5. If you're unsure, KEEP the business (better to have more than miss good leads)
 
-Example return format:
+Example - Category: "Dachdecker"
+Input:
 [
-  {
-    "name": "Mustermann Dachdeckerei GmbH",
-    "category": "Dachdecker",
-    "address": "Musterstraße 123, 80331 München",
-    "phone": "+49 89 12345678",
-    "website": "https://www.mustermann-dach.de",
-    "additional_info": "Meisterbetrieb seit 1985, Flachdach-Spezialist"
-  },
-  {
-    "name": "Schmidt Bedachungen",
-    "category": "Dachdecker",
-    "phone": "089 / 123 456",
-    "website": "https://schmidt-bedachungen.de"
-  }
+  {"name": "Müller Dachdeckerei GmbH", "category": "Dachdecker", "website": "https://mueller-dach.de"},
+  {"name": "Baustoffe Schmidt - Dachziegel Großhandel", "category": "Dachdecker", "website": "https://baustoffe-schmidt.de"},
+  {"name": "Zimmerei & Dachbau Meier", "category": "Dachdecker", "website": "https://meier-dach.de"}
 ]
+
+Output (removed the wholesaler):
+[
+  {"name": "Müller Dachdeckerei GmbH", "category": "Dachdecker", "website": "https://mueller-dach.de"},
+  {"name": "Zimmerei & Dachbau Meier", "category": "Dachdecker", "website": "https://meier-dach.de"}
+]
+"""
+
+# Email generation prompt (used when website exists but no email)
+AI_EMAIL_GENERATION_PROMPT = """Generate professional email addresses for German businesses based on their website domain.
+
+Rules:
+1. Use common German business email patterns: info@, kontakt@, office@
+2. Extract domain from website URL
+3. Return JSON object with "email" field
+4. Use info@ as the primary pattern (most common in Germany)
+
+Example:
+Input: {"website": "https://www.mueller-dachdeckerei.de"}
+Output: {"email": "info@mueller-dachdeckerei.de"}
+
+Input: {"website": "https://schmidt-dach.com"}
+Output: {"email": "info@schmidt-dach.com"}
 """
