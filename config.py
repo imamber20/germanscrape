@@ -47,7 +47,7 @@ CATEGORIES = {
     },
     'zimmereien': {
         'name': 'Zimmereien',
-        'keywords': ['Zimmerei', 'Holzbau', 'Dachstuhlbau'],
+        'keywords': ['Zimmerei', 'Zimmerer', 'Schreiner', 'Tischler', 'Holzbau', 'Dachstuhlbau', 'Holzkonstruktion', 'Zimmermannsbetrieb'],
         'google_type': 'general_contractor'
     },
     'abrissunternehmen': {
@@ -114,7 +114,7 @@ ZIP_RANGES = {
 # Application settings
 SETTINGS = {
     # Google Places API
-    'google_search_radius': 50000,  # 50km radius for each city search
+    'google_search_radius': 50000,  # 50km radius for each city search (covers entire Munich metropolitan area)
     'google_max_results': 60,  # Google Places limit (20 per page, 3 pages max)
     'google_request_delay': 0.1,  # seconds between API calls (Google allows 100 req/sec)
 
