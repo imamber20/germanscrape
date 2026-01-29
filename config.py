@@ -113,13 +113,14 @@ ZIP_RANGES = {
 
 # Application settings
 SETTINGS = {
-    # Google Places API
+    # Google Places API - OPTIMIZED
     'google_search_radius': 50000,  # 50km radius for each city search (covers entire Munich metropolitan area)
     'google_max_results': 60,  # Google Places limit (20 per page, 3 pages max)
-    'google_request_delay': 0.1,  # seconds between API calls (Google allows 100 req/sec)
+    'google_request_delay': 0.02,  # OPTIMIZED: 0.02s = 50 req/sec (was 0.1s = 10 req/sec)
+    'concurrent_requests': 25,  # OPTIMIZED: Process 25 businesses in parallel
 
     # Rate limiting
-    'request_delay': 1,  # seconds between requests
+    'request_delay': 0.5,  # OPTIMIZED: Reduced from 1s to 0.5s
     'retry_attempts': 3,
     'retry_delay': 2,  # initial retry delay in seconds
 
@@ -127,20 +128,28 @@ SETTINGS = {
     'ai_model': 'gpt-4o-mini',
     'ai_temperature': 0.1,
     'max_tokens': 2000,
-    'use_ai_filtering': True,  # Use AI to filter/enhance Google Places results
+    'use_ai_filtering': False,  # OPTIMIZED: Disabled to save time (was True)
 
-    # Output
+    # Checkpoint/Resume
+    'checkpoint_interval': 50,  # Save progress every 50 businesses
+    'checkpoint_file': 'progress.json',
+
+    # Output - OPTIMIZED (minimal fields)
     'output_dir': 'output',
     'log_level': 'INFO',  # DEBUG, INFO, WARNING, ERROR
+    'output_fields': ['name', 'category', 'email', 'website'],  # OPTIMIZED: Only essential fields
 
     # Data validation
     'required_fields': ['name', 'category'],
-    'optional_fields': ['address', 'phone', 'website', 'email', 'additional_info'],
+    'optional_fields': ['website', 'email'],  # OPTIMIZED: Removed unnecessary fields
 
     # Cost tracking
     'google_nearby_search_cost': 0.032,  # $32 per 1000 requests
     'google_place_details_cost': 0.017,  # $17 per 1000 requests
     'google_geocoding_cost': 0.005,  # $5 per 1000 requests
+
+    # Micro-test mode
+    'micro_test_max_leads': 20,  # Default for micro-test mode
 }
 
 # System prompt for AI filtering (Google Places provides clean data already)
