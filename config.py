@@ -134,10 +134,10 @@ SETTINGS = {
     'checkpoint_interval': 50,  # Save progress every 50 businesses
     'checkpoint_file': 'progress.json',
 
-    # Output - OPTIMIZED (minimal fields)
+    # Output - OPTIMIZED (essential fields for quality leads)
     'output_dir': 'output',
     'log_level': 'INFO',  # DEBUG, INFO, WARNING, ERROR
-    'output_fields': ['name', 'category', 'email', 'website'],  # OPTIMIZED: Only essential fields
+    'output_fields': ['name', 'category', 'email', 'website', 'phone', 'address'],  # All essential contact fields
 
     # Data validation
     'required_fields': ['name', 'category'],

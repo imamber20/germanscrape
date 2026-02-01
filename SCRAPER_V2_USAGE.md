@@ -20,7 +20,14 @@ python scraper_v2.py --interactive
 
 ### Production Mode (Full scrape)
 ```bash
+# With city names
 python scraper_v2.py --categories dachdecker,zimmereien --cities münchen,berlin,hamburg
+
+# With zip codes
+python scraper_v2.py --categories dachdecker --cities 80331,80333,80335,10115,10117
+
+# Mixed (cities and zip codes)
+python scraper_v2.py --categories dachdecker --cities münchen,80333,berlin,10115
 ```
 
 ## 📋 Command-Line Options
@@ -69,16 +76,17 @@ python scraper_v2.py --micro-test --categories dachdecker --cities münchen --ve
 
 ## 💰 Cost Estimation
 
-| Scenario | Leads | Estimated Cost |
-|----------|-------|----------------|
-| Micro-test | 20 | $0.30-0.50 |
-| Single category, single city | 100 | $1.50-2.50 |
-| Two categories, single city | 200 | $3.00-5.00 |
-| All categories, single city | 1,000 | $15.00-20.00 |
-| Two categories, all Germany | 10,000 | $150-200 |
-| All categories, all Germany | 50,000 | $750-1,000 |
+| Scenario | Leads | Estimated Cost | Cost per Lead |
+|----------|-------|----------------|---------------|
+| Micro-test | 20 | $0.34 | $0.017 |
+| Single category, single city | 100 | $1.70 | $0.017 |
+| Two categories, single city | 200 | $3.40 | $0.017 |
+| All categories, single city | 1,000 | $17.00 | $0.017 |
+| Two categories, all Germany | 10,000 | $170 | $0.017 |
+| All categories, all Germany | 50,000 | $850 | $0.017 |
+| **Target: 100K leads** | **100,000** | **$1,700** (~€1,550) | **$0.017** |
 
-**Note**: Optimizations reduce costs by 50% compared to v1
+**Note**: Cost includes complete contact info (phone, address, website) for each lead
 
 ## ⚡ Performance
 
@@ -123,9 +131,9 @@ cat progress.json | jq '.stats'
 
 ### Example output:
 ```csv
-name,category,email,website
-Müller Dachdeckerei GmbH,Dachdecker,info@mueller-dach.de,https://www.mueller-dach.de
-Schmidt Zimmerei,Zimmereien,info@schmidt-holzbau.de,https://schmidt-holzbau.de
+name,category,email,website,phone,address
+Müller Dachdeckerei GmbH,Dachdecker,info@mueller-dach.de,https://www.mueller-dach.de,+49 89 12345678,"Musterstraße 123, 80331 München, Germany"
+Schmidt Zimmerei,Zimmereien,info@schmidt-holzbau.de,https://schmidt-holzbau.de,089 / 7654321,"Hauptstraße 45, 80333 München, Germany"
 ```
 
 ## 🎯 Category Keys

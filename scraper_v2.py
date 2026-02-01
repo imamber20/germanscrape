@@ -109,16 +109,23 @@ class OptimizedLeadsScraper:
             self.logger.info("✓ OpenAI API initialized")
 
     def geocode_city(self, city: str) -> Optional[Dict[str, float]]:
-        """Get coordinates for city"""
+        """Get coordinates for city or zip code"""
         try:
-            query = f"{city}, Germany"
+            # Check if input looks like a zip code (5 digits)
+            if city.isdigit() and len(city) == 5:
+                query = f"{city}, Germany"  # Zip code
+                location_type = "Zip code"
+            else:
+                query = f"{city}, Germany"  # City name
+                location_type = "City"
+
             result = self.google_client.geocode(query)
             self.checkpoint.update_api_call('geocoding')
             self.checkpoint.update_cost(SETTINGS['google_geocoding_cost'])
 
             if result:
                 location = result[0]['geometry']['location']
-                self.logger.debug(f"✓ Geocoded {city}: {location['lat']:.4f}, {location['lng']:.4f}")
+                self.logger.debug(f"✓ Geocoded {location_type} {city}: {location['lat']:.4f}, {location['lng']:.4f}")
                 return location
 
             self.logger.warning(f"✗ No geocoding results for {city}")
@@ -187,10 +194,16 @@ class OptimizedLeadsScraper:
             return []
 
     def get_place_details(self, place_id: str) -> Optional[Dict[str, Any]]:
-        """Get detailed info for a business - OPTIMIZED: Only fetch essential fields"""
+        """Get detailed info for a business - fetch all essential contact fields"""
         try:
-            # OPTIMIZED: Only request name and website (minimal fields)
-            fields = ['name', 'website']
+            # Fetch all essential fields for quality leads
+            fields = [
+                'name',
+                'website',
+                'formatted_phone_number',
+                'international_phone_number',
+                'formatted_address'
+            ]
 
             result = self.google_client.place(
                 place_id=place_id,
@@ -210,7 +223,7 @@ class OptimizedLeadsScraper:
             return None
 
     def process_business(self, place: Dict[str, Any], category: str, city: str) -> Optional[Dict[str, Any]]:
-        """Process a single business - OPTIMIZED: Check Nearby Search for website first"""
+        """Process a single business - fetch all contact details"""
         try:
             place_id = place.get('place_id')
             if not place_id:
@@ -225,32 +238,34 @@ class OptimizedLeadsScraper:
             if self.max_leads and self.leads_collected >= self.max_leads:
                 return None
 
-            # OPTIMIZED: Check if Nearby Search already has website
-            website = place.get('website', '')
+            # Get basic info from Nearby Search
             name = place.get('name', '')
+            website = place.get('website', '')
 
-            # If no website in Nearby Search, fetch Place Details
-            if not website:
-                details = self.get_place_details(place_id)
-                if details:
-                    website = details.get('website', '')
-                    if not name:
-                        name = details.get('name', '')
-            else:
-                # OPTIMIZATION: We already have website, skip Place Details!
-                self.checkpoint.update_api_call('place_details_skipped')
-                self.logger.debug(f"✓ Website found in Nearby Search, skipped Place Details: {name}")
+            # ALWAYS fetch Place Details for phone and address (required fields)
+            details = self.get_place_details(place_id)
+            if not details:
+                self.logger.debug(f"Failed to get details for: {name}")
+                return None
+
+            # Extract all contact information
+            name = details.get('name', name)  # Use Place Details name if available
+            website = details.get('website', website)  # Use Place Details website if Nearby didn't have it
+            phone = details.get('formatted_phone_number') or details.get('international_phone_number', '')
+            address = details.get('formatted_address', '')
 
             if not name:
                 return None
 
-            # Create lead
+            # Create lead with all contact fields
             category_name = CATEGORIES[category]['name']
             lead = {
                 'name': name,
                 'category': category_name,
+                'email': self.generate_email_from_website(website) if website else '',
                 'website': website,
-                'email': self.generate_email_from_website(website) if website else ''
+                'phone': phone,
+                'address': address
             }
 
             # Mark as processed
@@ -362,11 +377,11 @@ class OptimizedLeadsScraper:
         estimated_cost = (
             len(self.selected_cities) * SETTINGS['google_geocoding_cost'] +
             total_searches * SETTINGS['google_nearby_search_cost'] +
-            estimated_places * 0.5 * SETTINGS['google_place_details_cost']  # 50% skip optimization
+            estimated_places * SETTINGS['google_place_details_cost']  # All businesses need Place Details for phone/address
         )
 
         self.logger.info(f"\n💰 Estimated cost: ${estimated_cost:.2f}")
-        self.logger.info(f"  (Assumes 50% of businesses already have websites in Nearby Search)")
+        self.logger.info(f"  (Fetches complete contact info: phone, address, website for all leads)")
 
         # Process each category and city
         for category in self.selected_categories:
@@ -489,26 +504,24 @@ class OptimizedLeadsScraper:
         print(f"  Geocoding calls: {stats['api_calls']['geocoding']}")
         print(f"  Nearby Search calls: {stats['api_calls']['nearby_search']}")
         print(f"  Place Details calls: {stats['api_calls']['place_details']}")
-        print(f"  Place Details skipped: {stats['api_calls']['place_details_skipped']}")
-        skipped_pct = (stats['api_calls']['place_details_skipped'] /
-                      (stats['api_calls']['place_details'] + stats['api_calls']['place_details_skipped']) * 100
-                      if (stats['api_calls']['place_details'] + stats['api_calls']['place_details_skipped']) > 0 else 0)
-        print(f"  Optimization savings: {skipped_pct:.1f}% of Place Details calls skipped")
         print(f"  Total cost: ${stats['total_cost']:.2f}")
+        print(f"  Cost per lead: ${stats['total_cost'] / len(self.all_leads):.4f}" if self.all_leads else "")
 
         print("\n" + "=" * 60 + "\n")
 
 
 def interactive_category_selection() -> List[str]:
-    """Interactive CLI for category selection"""
-    print("\n" + "=" * 60)
+    """Interactive CLI for category selection with keywords"""
+    print("\n" + "=" * 70)
     print("CATEGORY SELECTION")
-    print("=" * 60)
-    print("\nAvailable categories:")
+    print("=" * 70)
+    print("\nAvailable categories (with search keywords):")
 
     categories_list = list(CATEGORIES.items())
     for i, (key, config) in enumerate(categories_list, 1):
-        print(f"  {i}. {config['name']} ({', '.join(config['keywords'][:3])}...)")
+        keywords_str = ', '.join(config['keywords'])
+        print(f"  {i}. {config['name']}")
+        print(f"     Keywords: {keywords_str}")
     print(f"  {len(categories_list) + 1}. ALL categories")
 
     while True:
@@ -522,7 +535,9 @@ def interactive_category_selection() -> List[str]:
             selected = [categories_list[i][0] for i in indices if 0 <= i < len(categories_list)]
 
             if selected:
-                print(f"\n✓ Selected: {', '.join([CATEGORIES[c]['name'] for c in selected])}")
+                print(f"\n✓ Selected categories:")
+                for cat in selected:
+                    print(f"   - {CATEGORIES[cat]['name']} (Keywords: {', '.join(CATEGORIES[cat]['keywords'])})")
                 return selected
             else:
                 print("❌ Invalid selection. Try again.")
@@ -532,19 +547,29 @@ def interactive_category_selection() -> List[str]:
 
 
 def interactive_city_input() -> List[str]:
-    """Interactive city/zip input"""
-    print("\n" + "=" * 60)
-    print("CITY/ZIP CODE INPUT")
-    print("=" * 60)
+    """Interactive city/zip input with examples"""
+    print("\n" + "=" * 70)
+    print("LOCATION INPUT (Cities or Zip Codes)")
+    print("=" * 70)
+    print("\nExamples:")
+    print("  Cities: München, Berlin, Hamburg")
+    print("  Zip codes: 80331, 80333, 10115")
+    print("  Mixed: München, 80331, Berlin")
+    print("  Zip ranges: You can enter individual codes from a range")
 
-    choice = input("\nEnter city names or zip codes (comma-separated): ").strip()
-    cities = [c.strip() for c in choice.split(',') if c.strip()]
+    choice = input("\nEnter locations (comma-separated): ").strip()
+    locations = [c.strip() for c in choice.split(',') if c.strip()]
 
-    if cities:
-        print(f"✓ Will scrape: {', '.join(cities)}")
-        return cities
+    if locations:
+        print(f"\n✓ Will scrape these locations:")
+        for loc in locations:
+            if loc.isdigit() and len(loc) == 5:
+                print(f"   - {loc} (Zip code)")
+            else:
+                print(f"   - {loc} (City)")
+        return locations
     else:
-        print("❌ No cities entered. Using München as default.")
+        print("❌ No locations entered. Using München as default.")
         return ['München']
 
 
