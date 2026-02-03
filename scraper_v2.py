@@ -94,6 +94,10 @@ class OptimizedLeadsScraper:
             ]
         )
 
+        # Suppress urllib3 connection-level logs — they print full URLs
+        # including the API key when verbose is on
+        logging.getLogger('urllib3').setLevel(logging.WARNING)
+
         self.logger = logging.getLogger(__name__)
 
     def setup_google_places(self) -> None:
