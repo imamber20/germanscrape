@@ -24,6 +24,8 @@ import pandas as pd
 from dotenv import load_dotenv
 from openai import OpenAI
 import googlemaps
+import requests
+from requests.adapters import HTTPAdapter
 from tqdm import tqdm
 
 from config import CATEGORIES, ZIP_RANGES, SETTINGS
@@ -54,7 +56,9 @@ class OptimizedLeadsScraper:
 
         # Checkpoint manager
         self.checkpoint = CheckpointManager(SETTINGS['checkpoint_file'])
-        if not resume:
+        if resume:
+            self.checkpoint.load()  # Re-load with output so user sees resume info
+        else:
             self.checkpoint.clear()
 
         # Data storage
@@ -98,7 +102,15 @@ class OptimizedLeadsScraper:
         if not api_key:
             raise ValueError("GOOGLE_PLACES_API_KEY required in .env file")
 
-        self.google_client = googlemaps.Client(key=api_key)
+        # Use a session with pool size matching concurrent_requests to avoid
+        # "Connection pool is full" warnings under parallel load
+        session = requests.Session()
+        adapter = HTTPAdapter(pool_connections=SETTINGS['concurrent_requests'],
+                              pool_maxsize=SETTINGS['concurrent_requests'])
+        session.mount('https://', adapter)
+        session.mount('http://', adapter)
+
+        self.google_client = googlemaps.Client(key=api_key, session=session)
         self.logger.info("✓ Google Places API initialized")
 
     def setup_openai(self) -> None:
@@ -175,7 +187,7 @@ class OptimizedLeadsScraper:
                         page_token=results['next_page_token']
                     )
                     self.checkpoint.update_api_call('nearby_search')
-                    self.checkpoint.update_cost(SETTINGS['nearby_search_cost'])
+                    self.checkpoint.update_cost(SETTINGS['google_nearby_search_cost'])
 
                     if 'results' in results:
                         businesses.extend(results['results'])

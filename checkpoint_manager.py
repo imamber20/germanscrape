@@ -30,9 +30,9 @@ class CheckpointManager:
             },
             'leads_by_category': {}
         }
-        self.load()
+        self.load(silent=True)
 
-    def load(self) -> bool:
+    def load(self, silent: bool = False) -> bool:
         """Load existing checkpoint if available"""
         if not self.checkpoint_file.exists():
             return False
@@ -44,14 +44,16 @@ class CheckpointManager:
             self.processed_place_ids = set(data.get('processed_place_ids', []))
             self.stats = data.get('stats', self.stats)
 
-            print(f"\n✓ Loaded checkpoint: {len(self.processed_place_ids)} businesses already processed")
-            print(f"  Last checkpoint: {self.stats.get('last_checkpoint', 'N/A')}")
-            print(f"  Total cost so far: ${self.stats.get('total_cost', 0):.2f}")
+            if not silent:
+                print(f"\n✓ Loaded checkpoint: {len(self.processed_place_ids)} businesses already processed")
+                print(f"  Last checkpoint: {self.stats.get('last_checkpoint', 'N/A')}")
+                print(f"  Total cost so far: ${self.stats.get('total_cost', 0):.2f}")
 
             return True
 
         except Exception as e:
-            print(f"⚠️  Failed to load checkpoint: {e}")
+            if not silent:
+                print(f"⚠️  Failed to load checkpoint: {e}")
             return False
 
     def save(self) -> None:
