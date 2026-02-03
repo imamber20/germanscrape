@@ -102,15 +102,15 @@ class OptimizedLeadsScraper:
         if not api_key:
             raise ValueError("GOOGLE_PLACES_API_KEY required in .env file")
 
-        # Use a session with pool size matching concurrent_requests to avoid
-        # "Connection pool is full" warnings under parallel load
-        session = requests.Session()
+        self.google_client = googlemaps.Client(key=api_key)
+
+        # Increase the client's connection pool to match concurrent_requests,
+        # eliminating "Connection pool is full" warnings under parallel load
         adapter = HTTPAdapter(pool_connections=SETTINGS['concurrent_requests'],
                               pool_maxsize=SETTINGS['concurrent_requests'])
-        session.mount('https://', adapter)
-        session.mount('http://', adapter)
+        self.google_client.session.mount('https://', adapter)
+        self.google_client.session.mount('http://', adapter)
 
-        self.google_client = googlemaps.Client(key=api_key, session=session)
         self.logger.info("✓ Google Places API initialized")
 
     def setup_openai(self) -> None:
