@@ -339,11 +339,6 @@ class OptimizedLeadsScraper:
                             self.checkpoint.save()
                             self.logger.debug(f"✓ Checkpoint saved ({len(leads)} leads)")
 
-                        # Check if max leads reached
-                        if self.max_leads and self.leads_collected >= self.max_leads:
-                            self.logger.info(f"✓ Max leads ({self.max_leads}) reached, stopping...")
-                            break
-
                 except Exception as e:
                     self.logger.debug(f"Error processing future: {e}")
 
