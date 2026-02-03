@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -63,7 +64,9 @@ class OptimizedLeadsScraper:
 
         # Data storage
         self.all_leads: List[Dict[str, Any]] = []
-        self.leads_collected = 0
+        self._leads_lock = threading.Lock()
+        # Restore count from checkpoint so max_leads works correctly on resume
+        self.leads_collected = sum(self.checkpoint.stats.get('leads_by_category', {}).values())
 
         # Create output directory
         Path(SETTINGS['output_dir']).mkdir(exist_ok=True)
@@ -240,6 +243,8 @@ class OptimizedLeadsScraper:
 
     def process_business(self, place: Dict[str, Any], category: str, city: str) -> Optional[Dict[str, Any]]:
         """Process a single business - fetch all contact details"""
+        slot_reserved = False
+        lead_produced = False
         try:
             place_id = place.get('place_id')
             if not place_id:
@@ -250,9 +255,15 @@ class OptimizedLeadsScraper:
                 self.logger.debug(f"Skipping already processed: {place.get('name')}")
                 return None
 
-            # Check if max leads reached
-            if self.max_leads and self.leads_collected >= self.max_leads:
-                return None
+            # Thread-safe: reserve a lead slot before the expensive Place Details
+            # call.  Without this, all concurrent workers race past the check
+            # simultaneously and each fires a Place Details call, overshooting
+            # max_leads by up to max_workers.
+            with self._leads_lock:
+                if self.max_leads and self.leads_collected >= self.max_leads:
+                    return None
+                self.leads_collected += 1
+                slot_reserved = True
 
             # Get basic info from Nearby Search
             name = place.get('name', '')
@@ -287,13 +298,19 @@ class OptimizedLeadsScraper:
             # Mark as processed
             self.checkpoint.mark_processed(place_id)
             self.checkpoint.update_category_count(category_name)
-            self.leads_collected += 1
+            lead_produced = True
 
             return lead
 
         except Exception as e:
             self.logger.debug(f"Failed to process business: {e}")
             return None
+
+        finally:
+            # Release the slot if we reserved one but didn't produce a lead
+            if slot_reserved and not lead_produced:
+                with self._leads_lock:
+                    self.leads_collected -= 1
 
     def process_businesses_parallel(self, places: List[Dict[str, Any]], category: str, city: str) -> List[Dict[str, Any]]:
         """Process multiple businesses in parallel - OPTIMIZATION: 25 concurrent requests"""
