@@ -128,11 +128,19 @@ class OptimizedLeadsScraper:
             self.logger.info("✓ OpenAI API initialized")
 
     def geocode_city(self, city: str) -> Optional[Dict[str, float]]:
-        """Get coordinates for city or zip code"""
+        """Get coordinates for city, zip code, or zip code range"""
         try:
-            # Check if input looks like a zip code (5 digits)
-            if city.isdigit() and len(city) == 5:
-                query = f"{city}, Germany"  # Zip code
+            # Check if input is a zip code range (e.g. "68000-68999")
+            # Geocode the midpoint — one geocode covers the whole 1000-zip range
+            # at 50km search radius.
+            parts = city.split('-')
+            if len(parts) == 2 and all(p.isdigit() and len(p) == 5 for p in parts):
+                midpoint = (int(parts[0]) + int(parts[1])) // 2
+                query = f"{midpoint:05d}, Germany"
+                location_type = "Zip range"
+            # Single 5-digit zip code
+            elif city.isdigit() and len(city) == 5:
+                query = f"{city}, Germany"
                 location_type = "Zip code"
             else:
                 query = f"{city}, Germany"  # City name
@@ -591,7 +599,11 @@ def interactive_city_input() -> List[str]:
     if locations:
         print(f"\n✓ Will scrape these locations:")
         for loc in locations:
-            if loc.isdigit() and len(loc) == 5:
+            parts = loc.split('-')
+            if len(parts) == 2 and all(p.isdigit() and len(p) == 5 for p in parts):
+                midpoint = (int(parts[0]) + int(parts[1])) // 2
+                print(f"   - {loc} (Zip range → geocodes {midpoint:05d})")
+            elif loc.isdigit() and len(loc) == 5:
                 print(f"   - {loc} (Zip code)")
             else:
                 print(f"   - {loc} (City)")

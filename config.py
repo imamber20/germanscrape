@@ -54,6 +54,27 @@ CATEGORIES = {
         'name': 'Abrissunternehmen',
         'keywords': ['Abrissunternehmen', 'Abbruchfirma', 'Abbrucharbeiten'],
         'google_type': 'general_contractor'
+    },
+    'autohändler': {
+        'name': 'Autohändler',
+        'keywords': ['Autohändler', 'KFZ Handel', 'Gebrauchtwagen Händler', 'Neuwagen Verkauf',
+                     'Fahrzeughandel', 'Autohaus Händler', 'PKW Verkauf', 'Fahrzeugvertrieb',
+                     'Autohandel Firma', 'Automobilhandel'],
+        'google_type': 'car_dealer'
+    },
+    'autohäuser': {
+        'name': 'Autohäuser',
+        'keywords': ['Autohaus', 'Autohaus Betrieb', 'Fahrzeugzentrum', 'Markenautohaus',
+                     'Autohandelshaus', 'PKW Autohaus', 'Autohaus Service', 'Autoverkaufshaus',
+                     'Mobilitätszentrum Auto', 'Autohaus Firma'],
+        'google_type': 'car_dealer'
+    },
+    'autowerkstätten': {
+        'name': 'Autowerkstätten',
+        'keywords': ['Autowerkstatt', 'KFZ Werkstatt', 'Fahrzeugreparatur', 'Autoservice',
+                     'Wartung Auto', 'Reparaturbetrieb KFZ', 'Meisterwerkstatt Auto',
+                     'Fahrzeugservice', 'Auto Instandsetzung', 'KFZ Servicebetrieb'],
+        'google_type': 'car_repair'
     }
 }
 
