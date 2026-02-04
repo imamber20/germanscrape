@@ -171,6 +171,18 @@ SETTINGS = {
 
     # Micro-test mode
     'micro_test_max_leads': 20,  # Default for micro-test mode
+
+    # Domains that are directories or social-media profiles, not the business's
+    # own site.  Leads with these as their website are skipped — the generated
+    # email would belong to the platform, not the business.
+    'skip_domains': {
+        'facebook.com', 'instagram.com', 'twitter.com', 'x.com',
+        'linkedin.com', 'pinterest.com', 'youtube.com', 'tiktok.com',
+        'google.com', 'yelp.com', 'tripadvisor.com',
+        'kfzwerkstatt.io', 'malerfinder.de',
+        'jameda.de', 'branchenbuch.de', 'dasbranchenbuch.de',
+        'trustedshops.de',
+    },
 }
 
 # System prompt for AI filtering (Google Places provides clean data already)
