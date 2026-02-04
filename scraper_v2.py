@@ -292,6 +292,21 @@ class OptimizedLeadsScraper:
             if not name:
                 return None
 
+            # Quality gate: skip leads with no website (no email possible)
+            # and leads whose website is a directory or social-media platform
+            # (the generated email would belong to the platform, not the business).
+            # Returning None here releases the reserved slot so it doesn't
+            # count toward max_leads — the scraper keeps searching.
+            if not website:
+                self.logger.debug(f"Skipping no-website: {name}")
+                return None
+
+            parsed_netloc = urlparse(website).netloc.lower()
+            if any(parsed_netloc == d or parsed_netloc.endswith('.' + d)
+                   for d in SETTINGS['skip_domains']):
+                self.logger.debug(f"Skipping directory site: {name} ({parsed_netloc})")
+                return None
+
             # Create lead with all contact fields
             category_name = CATEGORIES[category]['name']
             lead = {
