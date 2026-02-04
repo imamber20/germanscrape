@@ -65,6 +65,7 @@ class OptimizedLeadsScraper:
         # Data storage
         self.all_leads: List[Dict[str, Any]] = []
         self._leads_lock = threading.Lock()
+        self._geocode_cache: Dict[str, Optional[Dict[str, float]]] = {}
         # Restore count from checkpoint so max_leads works correctly on resume
         self.leads_collected = sum(self.checkpoint.stats.get('leads_by_category', {}).values())
 
@@ -129,6 +130,9 @@ class OptimizedLeadsScraper:
 
     def geocode_city(self, city: str) -> Optional[Dict[str, float]]:
         """Get coordinates for city, zip code, or zip code range"""
+        if city in self._geocode_cache:
+            return self._geocode_cache[city]
+
         try:
             # Check if input is a zip code range (e.g. "68000-68999")
             # Geocode the midpoint — one geocode covers the whole 1000-zip range
@@ -153,72 +157,92 @@ class OptimizedLeadsScraper:
             if result:
                 location = result[0]['geometry']['location']
                 self.logger.debug(f"✓ Geocoded {location_type} {city}: {location['lat']:.4f}, {location['lng']:.4f}")
+                self._geocode_cache[city] = location
                 return location
 
             self.logger.warning(f"✗ No geocoding results for {city}")
+            self._geocode_cache[city] = None
             return None
 
         except Exception as e:
             self.logger.error(f"Geocoding failed for {city}: {e}")
+            self._geocode_cache[city] = None
             return None
 
     def search_google_places(self, category: str, city: str, location: Dict[str, float]) -> List[Dict[str, Any]]:
-        """Search for businesses using Nearby Search"""
+        """Search for businesses using Nearby Search — one query per keyword.
+
+        Each keyword is searched independently (up to 60 results each) to surface
+        the maximum number of unique businesses.  Results are deduplicated by
+        place_id within this method; place_ids already in the checkpoint are
+        excluded so that process_businesses_parallel never sees them.
+        """
         category_config = CATEGORIES.get(category)
         if not category_config:
             return []
 
         category_name = category_config['name']
         google_type = category_config.get('google_type', 'general_contractor')
-        keywords = ' '.join(category_config['keywords'])
+        keyword_list = category_config['keywords']
+        radius = SETTINGS['google_search_radius']
 
-        self.logger.info(f"🔍 Searching: {category_name} in {city}")
+        self.logger.info(f"🔍 Searching: {category_name} in {city} ({len(keyword_list)} keywords)")
 
-        businesses = []
-        try:
-            radius = SETTINGS['google_search_radius']
-            results = self.google_client.places_nearby(
-                location=location,
-                radius=radius,
-                type=google_type,
-                keyword=keywords,
-                language='de'
-            )
+        seen_ids: set = set()
+        businesses: List[Dict[str, Any]] = []
 
-            self.checkpoint.update_api_call('nearby_search')
-            self.checkpoint.update_cost(SETTINGS['google_nearby_search_cost'])
+        for keyword in keyword_list:
+            # Early exit: if max_leads already reached, no point searching more
+            if self.max_leads and self.leads_collected >= self.max_leads:
+                self.logger.debug(f"  Max leads reached, skipping remaining keywords")
+                break
 
-            if 'results' in results:
-                businesses.extend(results['results'])
-                self.logger.debug(f"  Page 1: {len(results['results'])} businesses")
+            try:
+                results = self.google_client.places_nearby(
+                    location=location,
+                    radius=radius,
+                    type=google_type,
+                    keyword=keyword,
+                    language='de'
+                )
 
-            # Get additional pages (up to 60 total)
-            page_count = 1
-            while 'next_page_token' in results and page_count < 3:
-                time.sleep(2)  # Google requires delay for next page
+                self.checkpoint.update_api_call('nearby_search')
+                self.checkpoint.update_cost(SETTINGS['google_nearby_search_cost'])
 
-                try:
-                    results = self.google_client.places_nearby(
-                        page_token=results['next_page_token']
-                    )
-                    self.checkpoint.update_api_call('nearby_search')
-                    self.checkpoint.update_cost(SETTINGS['google_nearby_search_cost'])
-
+                page_count = 1
+                while True:
                     if 'results' in results:
-                        businesses.extend(results['results'])
-                        page_count += 1
-                        self.logger.debug(f"  Page {page_count}: {len(results['results'])} businesses")
+                        for place in results['results']:
+                            pid = place.get('place_id')
+                            if pid and pid not in seen_ids and not self.checkpoint.is_processed(pid):
+                                seen_ids.add(pid)
+                                businesses.append(place)
 
-                except Exception as e:
-                    self.logger.warning(f"Failed to fetch page {page_count + 1}: {e}")
-                    break
+                        self.logger.debug(f"  [{keyword}] page {page_count}: {len(results['results'])} raw, "
+                                          f"{len(businesses)} unique so far")
 
-            self.logger.info(f"✓ Found {len(businesses)} businesses for {category_name} in {city}")
-            return businesses
+                    # Paginate up to 3 pages per keyword
+                    if 'next_page_token' not in results or page_count >= 3:
+                        break
 
-        except Exception as e:
-            self.logger.error(f"Search failed for {category} in {city}: {e}")
-            return []
+                    time.sleep(2)  # Google requires delay between pages
+                    page_count += 1
+                    try:
+                        results = self.google_client.places_nearby(
+                            page_token=results['next_page_token']
+                        )
+                        self.checkpoint.update_api_call('nearby_search')
+                        self.checkpoint.update_cost(SETTINGS['google_nearby_search_cost'])
+                    except Exception as e:
+                        self.logger.warning(f"  [{keyword}] failed to fetch page {page_count}: {e}")
+                        break
+
+            except Exception as e:
+                self.logger.warning(f"  Search failed for keyword '{keyword}' in {city}: {e}")
+                continue
+
+        self.logger.info(f"✓ Found {len(businesses)} unique businesses for {category_name} in {city}")
+        return businesses
 
     def get_place_details(self, place_id: str) -> Optional[Dict[str, Any]]:
         """Get detailed info for a business - fetch all essential contact fields"""
@@ -283,6 +307,12 @@ class OptimizedLeadsScraper:
                 self.logger.debug(f"Failed to get details for: {name}")
                 return None
 
+            # Mark as processed immediately after a successful Place Details call.
+            # This must happen BEFORE the quality gate so that businesses without
+            # a website (or with a directory-site domain) are never re-fetched on
+            # resume or by a later category that shares the same google_type.
+            self.checkpoint.mark_processed(place_id)
+
             # Extract all contact information
             name = details.get('name', name)  # Use Place Details name if available
             website = details.get('website', website)  # Use Place Details website if Nearby didn't have it
@@ -318,8 +348,6 @@ class OptimizedLeadsScraper:
                 'address': address
             }
 
-            # Mark as processed
-            self.checkpoint.mark_processed(place_id)
             self.checkpoint.update_category_count(category_name)
             lead_produced = True
 
