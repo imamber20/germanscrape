@@ -1,338 +1,311 @@
 # German Handwerk Leads Scraper
 
-Automated lead generation system for German blue-collar businesses (Handwerk) using Google Places API. Designed for HeyKiki's AI voice bot service.
+Automated lead generation for German blue-collar trades (Handwerk) using Google Places API. Built for HeyKiki's AI voice-bot outreach: the scraper produces a CSV of business contacts that feeds a daily email campaign (1,000–2,000 emails/day) targeting tradespeople across Germany.
 
-## Features
+---
 
-- ✅ **Google Places API Integration** - Reliable, high-quality business data
-- ✅ **High Website Completion** - 70-90% of leads include website URLs
-- ✅ **Email Generation** - Automatic info@domain.de generation from websites
-- ✅ **10 Business Categories** - Dachdecker, Heizungsbauer, Sanitär, Elektrik, Maler, etc.
-- ✅ **10 Major German Regions** - München, Berlin, Hamburg, Köln, Frankfurt, etc.
-- ✅ **CSV & Excel Export** - UTF-8 encoding for German characters (ä, ö, ü, ß)
-- ✅ **Deduplication** - Automatic removal of duplicates by website/phone/name
-- ✅ **Cost Tracking** - Real-time API usage and cost estimation
-- ✅ **AI Filtering** - Optional OpenAI-powered quality control
+## Goal
 
-## Cost Structure
+Collect 100,000 unique Handwerk business leads across Germany at a target budget of ~€2,000 (~$2,100). Each lead contains: business name, trade category, generated email, website, phone number, and full address. Leads are deduplicated and exported as a single CSV, ready to be loaded into an email/outreach tool.
 
-**Google Places API Pricing:**
-- Geocoding: $5 per 1,000 requests
-- Nearby Search: $32 per 1,000 requests
-- Place Details: $17 per 1,000 requests
+---
 
-**Example Cost (10 categories × 10 cities = 100 searches):**
-- Geocoding: 10 cities × $0.005 = $0.05
-- Nearby Search: 100 searches × $0.032 = $3.20
-- Place Details: ~1,800 businesses × $0.017 = $30.60
-- **Total: ~$34 for ~1,800 quality leads** (~$0.02 per lead)
+## Why Google Places API
 
-**Free Tier:** Google Cloud provides $200 free credit per month (good for ~5,000-10,000 leads)
+The project originally used Playwright to scrape Gelbe Seiten (gelbeseiten.de). That approach was completely abandoned:
 
-## Setup Instructions
+- Websites were hidden behind JavaScript click-handlers — 0% extraction rate after multiple attempts
+- No reliable way to get phone numbers or addresses without rendering full pages
+- Brittle and slow (5+ hours for a single run)
 
-### 1. Prerequisites
+Google Places API replaced it entirely. It provides verified business data (name, website, phone, address) in a single API call per business, with 90%+ website completion in practice.
 
-- Python 3.10 or higher
+---
+
+## Active Files
+
+| File | Role |
+|------|------|
+| `scraper_v2.py` | **Main scraper — this is the only file you run** |
+| `checkpoint_manager.py` | Resume/progress system (used by scraper_v2) |
+| `config.py` | Categories, zip regions, API settings, costs |
+| `requirements.txt` | Python dependencies |
+| `.env` | API keys (created from `.env.example`) |
+
+**Deprecated — do not use:**
+- `scraper.py` — original v1 Google Places scraper, superseded by v2
+- `scrape_munich_carpenters_roofers.py` — Munich-only script with a config bug, never worked correctly
+- `SCRAPER_V2_USAGE.md` — outdated usage doc from before the bug-fix rounds
+
+---
+
+## Setup
+
+### Prerequisites
+
+- Python 3.10+
 - Google Cloud account with billing enabled
-- OpenAI API key (optional, for AI filtering)
 
-### 2. Google Cloud Setup
+### Google Cloud — required APIs
 
-#### Step 1: Create Google Cloud Project
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Click "Select a Project" → "New Project"
-3. Name: "German Leads Scraper" (or your choice)
-4. Click "Create"
+Both of these must be enabled or you will get `REQUEST_DENIED`:
 
-#### Step 2: Enable Required APIs
-1. In Google Cloud Console, go to **"APIs & Services" → "Library"**
-2. Search and enable these APIs:
-   - **Places API (New)** - For searching businesses
-   - **Geocoding API** - For converting city names to coordinates
+1. **Places API** — business search and details
+2. **Geocoding API** — city/zip-code to coordinates
 
-#### Step 3: Create API Key
-1. Go to **"APIs & Services" → "Credentials"**
-2. Click **"Create Credentials" → "API Key"**
-3. Copy the API key (starts with `AIzaSy...`)
+Enable at: Google Cloud Console → APIs & Services → Library.
 
-#### Step 4: Restrict API Key (Important for Security)
-1. Click **"Edit API key"** (pencil icon)
-2. Under **"API restrictions"**:
-   - Select **"Restrict key"**
-   - Choose: **"Places API (New)"** and **"Geocoding API"**
-3. Under **"Application restrictions"** (optional):
-   - Select **"IP addresses"**
-   - Add your server's IP address
-4. Click **"Save"**
-
-#### Step 5: Set Up Billing
-1. Go to **"Billing"** in Google Cloud Console
-2. Add a payment method (credit card required)
-3. **Set up budget alerts:**
-   - Go to **"Billing" → "Budgets & alerts"**
-   - Create alert for $50, $100, $150 to avoid surprises
-4. You'll get **$200 free credit** automatically
-
-### 3. Installation
+### Install
 
 ```bash
-# Clone repository
 git clone https://github.com/imamber20/germanscrape.git
 cd germanscrape
-
-# Install dependencies
 pip install -r requirements.txt
-```
-
-### 4. Configuration
-
-#### Create `.env` file:
-```bash
 cp .env.example .env
+# Edit .env — add your GOOGLE_PLACES_API_KEY
 ```
 
-#### Edit `.env` with your API keys:
+### `.env` contents
+
+```
+GOOGLE_PLACES_API_KEY=AIzaSyXXXXXXXXXXXXXXXXXXXXXXXX   # required
+OPENAI_API_KEY=sk-XXXXXXXXX                             # optional, unused currently
+```
+
+---
+
+## How to Run — All Scenarios
+
+### Quick sanity check (20 leads, ~$0.40)
+
 ```bash
-# REQUIRED: Google Places API Key
-GOOGLE_PLACES_API_KEY=AIzaSyXXXXXXXXXXXXXXXXXXXXXXXX
-
-# OPTIONAL: OpenAI API Key (for AI filtering)
-OPENAI_API_KEY=sk-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+python scraper_v2.py --micro-test --categories dachdecker --cities münchen --verbose
 ```
 
-### 5. Usage
+### Interactive mode — pick category and location from menus
 
-#### Test Run (1 city, all categories):
 ```bash
-python scraper.py --test --max-cities 1 --verbose
+python scraper_v2.py --interactive --micro-test
 ```
 
-#### Full Run (all 10 cities, all 10 categories):
+Displays all 10 categories with their German keywords. Accepts city names or individual 5-digit zip codes at the location prompt.
+
+### Specific category + city (command-line, no menus)
+
 ```bash
-python scraper.py
+python scraper_v2.py --categories dachdecker,zimmereien --cities münchen,berlin --max-leads 100 --verbose
 ```
 
-#### Custom Run (limit to 3 cities):
+### Multiple zip codes
+
+Zip codes must be individual 5-digit values, comma-separated. Ranges like `80000-80999` are **not** supported yet — they get geocoded as a literal string (see Known Limitations).
+
 ```bash
-python scraper.py --max-cities 3
+python scraper_v2.py --categories dachdecker --cities 80331,80333,80336 --max-leads 50 --verbose
 ```
 
-### 6. Command-Line Options
+### Resume an interrupted run
 
+If a run is interrupted (Ctrl+C or crash), resume with the exact same flags plus `--resume`:
+
+```bash
+# Original command:
+python scraper_v2.py --categories dachdecker --cities 80331,80333,80336 --max-leads 50 --verbose
+
+# After interruption — same flags, add --resume:
+python scraper_v2.py --categories dachdecker --cities 80331,80333,80336 --max-leads 50 --resume --verbose
 ```
---test              Run in test mode (limited results)
---max-cities N      Limit to N cities (useful for testing)
---verbose           Enable detailed logging
+
+Resume behaviour:
+- Loads `progress.json` and prints how many businesses were already processed
+- Re-runs Nearby Search (cheap, ~$0.03/page) to get the place_id list
+- Skips every place_id already in the checkpoint — zero Place Details calls on duplicates
+- Stops when total leads (previous + new) reaches `--max-leads`
+
+### All categories, all regions (production run)
+
+Omit `--categories` and `--cities` to use every category and every city defined in `config.py`:
+
+```bash
+python scraper_v2.py --max-leads 5000 --verbose
 ```
+
+---
+
+## CLI Reference
+
+| Flag | Description |
+|------|-------------|
+| `--micro-test` | Cap at 20 leads. Safe for iteration (~$0.40). Sets `--max-leads 20` automatically. |
+| `--categories` | Comma-separated category keys (e.g. `dachdecker,zimmereien`). Omit for all. |
+| `--cities` | Comma-separated city names or 5-digit zip codes. Omit for all cities in config. |
+| `--max-leads N` | Stop after N leads are collected (across all categories/cities). |
+| `--resume` | Load checkpoint and continue. Must use same `--categories` and `--cities` as the original run. |
+| `--interactive` | Show category and location menus instead of requiring CLI flags. |
+| `--verbose` | DEBUG-level logging to stdout and log file. urllib3 is silenced even in verbose mode to prevent API key leaking into logs. |
+
+---
+
+## Categories
+
+Defined in `config.py`. Each has a list of German keywords used in the Google Nearby Search query, and a Google Places type that narrows results.
+
+| Key | Display Name | Keywords | Google Type |
+|-----|-------------|----------|-------------|
+| `dachdecker` | Dachdecker | Dachdecker, Dachdeckerei, Dachsanierung, Dachbau | roofing_contractor |
+| `heizungsbauer` | Heizungsbauer | Heizungsbauer, Heizungsbau, Heizungstechnik | plumber |
+| `sanitärinstallateure` | Sanitärinstallateure | Sanitärinstallateur, Sanitärtechnik, Badezimmerbau | plumber |
+| `elektrotechnik` | Elektrotechnik | Elektrotechnik, Elektroinstallation, Elektriker | electrician |
+| `malerbetriebe` | Malerbetriebe | Malerbetrieb, Malerarbeiten, Fassadenanstrich | painter |
+| `fliesenleger` | Fliesenleger | Fliesenleger, Fliesenverlegung, Badfliesen | general_contractor |
+| `bauunternehmen` | Bauunternehmen | Bauunternehmen, Baufirma, Hochbauunternehmen | general_contractor |
+| `trockenbaufirmen` | Trockenbaufirmen | Trockenbau, Gipskartonbau, Innenausbau | general_contractor |
+| `zimmereien` | Zimmereien | Zimmerei, Zimmerer, Schreiner, Tischler, Holzbau, Dachstuhlbau, Holzkonstruktion, Zimmermannsbetrieb | general_contractor |
+| `abrissunternehmen` | Abrissunternehmen | Abrissunternehmen, Abbruchfirma, Abbrucharbeiten | general_contractor |
+
+---
 
 ## Output
 
-The scraper generates two files in the `output/` directory:
+CSV exported to `output/leads_YYYYMMDD_HHMMSS.csv`. Encoded as UTF-8-BOM so German characters (ä, ö, ü, ß) display correctly when opened directly in Excel.
 
-- **CSV**: `leads_YYYYMMDD_HHMMSS.csv` (UTF-8-BOM encoding for Excel)
-- **Excel**: `leads_YYYYMMDD_HHMMSS.xlsx` (native Excel format)
+| Column | Source | Notes |
+|--------|--------|-------|
+| `name` | Google Place Details | Authoritative business name |
+| `category` | Scraper | Which category key triggered this result |
+| `email` | Generated | `info@` + domain extracted from website. See Known Limitations. |
+| `website` | Google Place Details | The business's own website URL |
+| `phone` | Google Place Details | Formatted phone number |
+| `address` | Google Place Details | Full street address including city and postal code |
 
-### Output Columns:
-| Column | Description | Example |
-|--------|-------------|---------|
-| name | Business name | Müller Dachdeckerei GmbH |
-| category | Business type (German) | Dachdecker |
-| email | Generated from website | info@mueller-dach.de |
-| website | Official website URL | https://www.mueller-dach.de |
-| phone | Phone number | +49 89 12345678 |
-| address | Full address | Musterstraße 123, 80331 München |
-| city | City name | München |
-| rating | Google rating | 4.5 |
-| reviews | Number of reviews | 127 |
-| source | Data source | Google Places |
+Deduplication runs before export: primary key is the website URL (lowercased), fallback is the business name. One duplicate is typically removed per 20-lead batch.
 
-## Expected Results
+---
 
-**With Google Places API:**
-- ✅ **70-90% website completion** (Google provides verified websites)
-- ✅ **60-80% email completion** (generated from websites)
-- ✅ **100% phone/address completion** (Google data is comprehensive)
-- ✅ **High data quality** (official Google business information)
+## Cost Structure
 
-**Example for 100 searches (10 categories × 10 cities):**
-- Total businesses: ~1,800-2,000
-- With websites: ~1,400-1,800 (70-90%)
-- With emails: ~1,200-1,600 (60-80%)
-- Cost: ~$34 (within free $200 credit)
+Per-call costs from Google's pricing page, tracked in real time during every run:
 
-## Configuration
+| API Call | Cost | When it fires |
+|----------|------|---------------|
+| Geocoding | $0.005 | Once per city/zip code |
+| Nearby Search | $0.032 | Once per page of results (up to 3 pages = 60 businesses) |
+| Place Details | $0.017 | Once per business that passes the max_leads gate |
 
-### Business Categories (in `config.py`):
-1. **Dachdecker** - Roofers
-2. **Heizungsbauer** - Heating contractors
-3. **Sanitärinstallateure** - Plumbers
-4. **Elektrotechnik** - Electricians
-5. **Malerbetriebe** - Painters
-6. **Fliesenleger** - Tile setters
-7. **Bauunternehmen** - Construction companies
-8. **Trockenbaufirmen** - Drywall companies
-9. **Zimmereien** - Carpentry companies
-10. **Abrissunternehmen** - Demolition companies
+**Actual costs from completed test runs:**
 
-### Cities (in `config.py`):
-- München, Berlin, Hamburg, Köln, Frankfurt, Stuttgart, Hannover, Essen, Dresden, Nürnberg
+| Test | Leads | Place Details calls | Total cost | Cost/lead |
+|------|-------|---------------------|------------|-----------|
+| Dachdecker München micro | 19 | 20 | $0.44 | $0.023 |
+| Zimmereien München micro | 19 | 19 | $0.36 | $0.019 |
+| Malerbetriebe interactive | 20 | 20 | $0.44 | $0.022 |
+| Dachdecker 3 zip codes | 49 | 50 | $1.02 | $0.021 |
 
-You can add more categories or cities by editing `config.py`.
+At $0.02/lead the 100K-lead target costs roughly **$2,000** — within the planned budget.
 
-## Features in Detail
+---
 
-### 1. Google Places Integration
-- Uses official Google Places API for reliable data
-- Geocodes German cities to coordinates
-- Searches 50km radius around each city
-- Fetches up to 60 businesses per search
-- Gets detailed info (website, phone, address, ratings)
+## How the Scraper Works Internally
 
-### 2. Email Generation
-- Automatically generates `info@domain.de` from website URLs
-- Uses German business email patterns
-- 60-80% success rate (depends on website availability)
+1. **Geocode** each city/zip code to lat/lng via the Geocoding API
+2. **Nearby Search** with the category's keywords + Google type + 50km radius. Paginates up to 3 pages (60 businesses max per search). 2-second sleep between pages as Google requires.
+3. **Slot reservation** — before firing an expensive Place Details call, each worker thread atomically claims a slot under a `threading.Lock`. If `max_leads` is already reached, the thread returns immediately. This prevents the 25-thread pool from overshooting the lead cap.
+4. **Place Details** — fetches name, website, phone, address for the business
+5. **Email generation** — parses the website URL, strips `www.`, prepends `info@`
+6. **Checkpoint** — `progress.json` tracks every processed `place_id`. Saved every 50 leads and on interrupt. On resume, all previously seen place_ids are skipped at zero API cost.
+7. **Deduplicate + export** — removes duplicates by website/name, writes CSV
 
-### 3. Deduplication
-- Removes duplicates by website (primary)
-- Removes duplicates by phone (secondary)
-- Removes duplicates by business name (tertiary)
-- Ensures clean, unique lead list
+Parallel processing: 25 `ThreadPoolExecutor` workers fire Place Details calls concurrently. The googlemaps client's connection pool is sized to match (25), so no connections are discarded under load. Typical throughput: 20 Place Details calls complete in under 1 second.
 
-### 4. AI Filtering (Optional)
-- Requires OpenAI API key
-- Filters out suppliers, wholesalers, retailers
-- Keeps only service businesses (Handwerk)
-- Improves lead quality by 10-20%
+---
 
-### 5. Cost Tracking
-- Real-time API call counter
-- Cost estimation before scraping
-- Detailed breakdown by API type
-- Helps manage budget
+## Checkpoint / Resume System
+
+`progress.json` is written atomically (temp file + rename) so a crash mid-write can't corrupt it. It stores:
+
+- `processed_place_ids` — set of every Google place_id that has been fully processed
+- `stats` — cumulative API call counts, cost, leads per category, last-save timestamp
+
+On `--resume`:
+- The scraper loads the checkpoint and prints the summary
+- `leads_collected` is restored from the category-count totals so `--max-leads` works correctly across interrupted runs
+- The Nearby Search re-runs (cheap) to get the current place_id list; every id already in the checkpoint is skipped before any Place Details call is made
+
+Without `--resume` the checkpoint is cleared at startup — every run starts fresh unless you explicitly opt in.
+
+---
+
+## Known Limitations
+
+### Zip code ranges not supported
+Entering `80000-80999` in the location prompt treats it as a literal city name, not a range. Google's geocoder happens to resolve it to the München area, so it works by accident. For reliable multi-zip coverage, enter individual codes: `80331,80333,80336`. Range expansion is planned but not yet implemented.
+
+### Directory-site emails (~5–10% of leads)
+Some businesses are listed on directory sites like `malerfinder.de` instead of having their own website. The email generator produces `info@malerfinder.de` for all of them — which is the directory's inbox, not the business's. These can be filtered post-export by checking for duplicate emails across different businesses, or flagged by detecting URL paths that look like directory listings (e.g. `/city/id-name`).
+
+### Resume re-runs Nearby Search
+On resume the scraper re-geocodes and re-searches each city/zip. This costs ~$0.07–0.10 per location in redundant API calls. The actual expensive calls (Place Details) are correctly skipped. Acceptable at current scale; search-result caching in the checkpoint is a possible future optimization.
+
+### Google returns up to 60 businesses per search
+Nearby Search maxes out at 3 pages × 20 results = 60 per keyword+location combo. To get more businesses in the same area, you need either additional keywords or overlapping search points (different zip codes). The checkpoint deduplicates place_ids across searches automatically.
+
+---
 
 ## Troubleshooting
 
-### Error: "GOOGLE_PLACES_API_KEY not found"
-**Solution:** Add your API key to `.env` file:
-```bash
-GOOGLE_PLACES_API_KEY=AIzaSyXXXXXXXXXXXXXXXXXXXXXXXX
-```
+### `REQUEST_DENIED`
+Both **Places API** and **Geocoding API** must be enabled in Google Cloud Console. Enabling one without the other produces this error on the missing API's calls. Wait 2–5 minutes after enabling for propagation.
 
-### Error: "API key not valid"
-**Solution:**
-1. Check if you enabled "Places API (New)" and "Geocoding API"
-2. Verify API key restrictions allow your IP address
-3. Wait 2-5 minutes after creating the key (propagation time)
+### `Client.__init__() got an unexpected keyword argument 'session'`
+The `googlemaps` library does not accept a `session` constructor argument. The connection pool is configured by mounting an `HTTPAdapter` on `client.session` after construction — this is already done in the current code.
 
-### Error: "Billing not enabled"
-**Solution:**
-1. Go to Google Cloud Console → "Billing"
-2. Link a payment method
-3. Accept terms of service
+### `KeyError: 'nearby_search_cost'`
+A config key typo from an earlier version. The correct key is `google_nearby_search_cost`. Already fixed in current code. If you see this, you're running an old checkout.
 
-### Low website completion rate (<50%)
-**Check:**
-1. Ensure you're using Google Places API (not Gelbe Seiten)
-2. Verify API key has correct permissions
-3. Check logs for errors during Place Details API calls
+### `Connection pool is full, discarding connection`
+Means the googlemaps client's pool is smaller than the number of concurrent threads. Already fixed — pool size matches `concurrent_requests` (25). If you see this, you're running an old checkout.
 
-### High costs
-**Solutions:**
-1. Use `--max-cities` to limit scope
-2. Reduce categories in `config.py`
-3. Set up budget alerts in Google Cloud
-4. Use test mode first: `--test --max-cities 1`
+### Only 1 lead exported despite 20 Place Details calls
+A race condition from an earlier version where the result-collection loop broke on `leads_collected` (reservation count) instead of actual collected count. Already fixed. If you see this, you're running an old checkout.
+
+---
 
 ## Project Structure
 
 ```
 germanscrape/
-├── scraper.py          # Main scraper with Google Places API
-├── config.py           # Categories, cities, settings
-├── requirements.txt    # Python dependencies
-├── .env               # API keys (create from .env.example)
-├── .env.example       # API key template
-├── README.md          # This file
-├── output/            # Generated CSV/Excel files
-└── logs/              # Scraper logs with timestamps
+├── scraper_v2.py              # Main scraper (the only file you run)
+├── checkpoint_manager.py      # Resume / progress tracking
+├── config.py                  # Categories, regions, settings, costs
+├── requirements.txt           # pip dependencies
+├── .env                       # API keys (gitignored)
+├── .env.example               # Template for .env
+├── README.md                  # This file
+├── output/                    # Exported CSVs (gitignored)
+├── logs/                      # Timestamped log files (gitignored)
+├── progress.json              # Checkpoint file, auto-created at runtime
+│
+├── scraper.py                 # DEPRECATED — v1 scraper, do not use
+├── scrape_munich_carpenters_roofers.py  # DEPRECATED — broken config override
+└── SCRAPER_V2_USAGE.md        # DEPRECATED — outdated docs
 ```
 
-## Development
+---
 
-### Adding New Categories
-Edit `config.py`:
-```python
-CATEGORIES = {
-    'your_category': {
-        'name': 'Your Category Name',
-        'keywords': ['keyword1', 'keyword2'],
-        'google_type': 'relevant_google_type'  # See Google Places types
-    }
-}
-```
+## Test Results (all passing)
 
-### Adding New Cities
-Edit `config.py`:
-```python
-ZIP_RANGES = {
-    '12000-12999': {
-        'cities': ['Your City'],
-        'state': 'Your State',
-        'region': 'Your Region'
-    }
-}
-```
+| # | Test | Command | Result |
+|---|------|---------|--------|
+| 1 | Dachdecker micro-test | `--micro-test --categories dachdecker --cities münchen` | 19 leads, 94.7% website, $0.44 |
+| 2 | Zimmereien micro-test | `--micro-test --categories zimmereien --cities münchen` | 19 leads, 94.7% website, $0.36 |
+| 3 | Zip code input | `--micro-test --categories dachdecker --cities 80331,80333` | 19 leads, zip geocoding confirmed |
+| 4 | Interactive mode | `--interactive --micro-test` | Menu renders, category + location accepted |
+| 5 | Interrupt + resume | `--max-leads 50` → Ctrl+C → same flags + `--resume` | Checkpoint saved on interrupt, resume skipped processed place_ids, collected remaining leads |
 
-### Adjusting Search Radius
-Edit `config.py`:
-```python
-SETTINGS = {
-    'google_search_radius': 75000,  # 75km instead of default 50km
-}
-```
+---
 
-## API Rate Limits
+## What's Next
 
-**Google Places API:**
-- No strict rate limit (uses credits)
-- ~100 requests per second recommended
-- Script includes automatic delays (0.1s per request)
-
-**OpenAI API (if using):**
-- Tier 1: 500 requests per minute
-- Tier 2: 5,000 requests per minute
-- Script uses minimal AI calls (1 per search for filtering)
-
-## Support & Contact
-
-- **Issues:** [GitHub Issues](https://github.com/imamber20/germanscrape/issues)
-- **Email:** imamber20@example.com
-
-## License
-
-MIT License - See LICENSE file for details
-
-## Changelog
-
-### v2.0.0 (Current) - Google Places API Integration
-- ✅ Complete rewrite with Google Places API
-- ✅ 70-90% website completion rate
-- ✅ Automatic email generation
-- ✅ Cost tracking and estimation
-- ✅ Improved data quality
-- ❌ Removed Playwright/BeautifulSoup dependencies
-- ❌ Removed Gelbe Seiten scraping (unreliable)
-
-### v1.0.0 - Initial Release (Deprecated)
-- ❌ Playwright-based Gelbe Seiten scraping
-- ❌ 0% website extraction (failed)
-- ❌ BeautifulSoup HTML parsing
-- ❌ High complexity, low results
-
-## Acknowledgments
-
-- Google Places API for reliable business data
-- OpenAI for AI-powered filtering
-- HeyKiki team for requirements and feedback
+- **Zip range parsing** — support `80000-80999` syntax in location input, expanding to sampled representative points
+- **Directory-site email filter** — detect and flag leads where the website is a directory listing, not the business's own domain
+- **Production run** — large-scale scrape across all categories and regions, using checkpoint resume to run in batches within Google's daily quota
