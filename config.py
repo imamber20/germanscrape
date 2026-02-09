@@ -1,6 +1,10 @@
 """
 Configuration file for German Handwerk Leads Scraper
 Contains categories, zip ranges, and application settings
+
+Supports two scraping sources:
+  1. Google Places API (scraper_v2.py) - paid, high quality
+  2. 11880.com (scraper_11880.py) - free, Germany's largest business directory
 """
 
 # Business categories with German keywords and Google Places types
