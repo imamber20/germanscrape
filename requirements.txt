@@ -9,5 +9,9 @@ googlemaps>=4.10.0
 # AI extraction (for email generation and data filtering)
 openai>=1.10.0
 
+# 11880.com scraper (Selenium + BeautifulSoup)
+selenium>=4.15.0
+beautifulsoup4>=4.12.0
+
 # Utilities
 tqdm>=4.66.0
