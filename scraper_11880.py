@@ -290,10 +290,12 @@ class Scraper11880:
         # We try multiple strategies to find business entries.
 
         # Strategy 1: Look for structured result items by common class patterns
+        # Note: use word-boundary-aware patterns to avoid matching parent
+        # containers (e.g., "search-results" should not match "search-result")
         result_items = soup.select(
-            '[class*="result-item"], [class*="entry-item"], '
-            '[class*="treffer"], [class*="ResultItem"], '
-            '[class*="listing-entry"], [class*="search-result"]'
+            '.result-item, .entry-item, '
+            '[class*="treffer"], .ResultItem, '
+            '.listing-entry, .search-result'
         )
 
         # Strategy 2: If no results from Strategy 1, look for article/li patterns
@@ -305,27 +307,34 @@ class Scraper11880:
 
         # Strategy 3: Look for elements containing business data markers
         if not result_items:
-            # Find containers that have both a business name link and phone/address
-            result_items = soup.find_all(lambda tag: (
-                tag.name in ('div', 'article', 'li', 'section') and
-                tag.find('a', href=re.compile(r'/branchenbuch/')) is not None
-            ))
-
-        # Strategy 4: Broadest - any div with an h2/h3 containing a link to branchenbuch
-        if not result_items:
+            # Find the smallest container for each /branchenbuch/ link
+            # that is not a child of another matched container
             branchenbuch_links = soup.find_all('a', href=re.compile(r'/branchenbuch/'))
-            seen_parents = set()
+            seen_elements = set()
             for link in branchenbuch_links:
-                # Walk up to find a reasonable container
+                # Walk up to the nearest container element
                 parent = link.parent
                 for _ in range(5):
                     if parent and parent.name in ('div', 'article', 'li', 'section'):
                         parent_id = id(parent)
-                        if parent_id not in seen_parents:
-                            seen_parents.add(parent_id)
+                        if parent_id not in seen_elements:
+                            # Check this isn't a parent of an already-matched element
+                            seen_elements.add(parent_id)
                             result_items.append(parent)
                         break
                     parent = parent.parent if parent else None
+
+            # Deduplicate: remove items that are ancestors of other items
+            if len(result_items) > 1:
+                filtered = []
+                for item in result_items:
+                    is_ancestor = any(
+                        item is not other and item in (other.parents or [])
+                        for other in result_items
+                    )
+                    if not is_ancestor:
+                        filtered.append(item)
+                result_items = filtered
 
         self.logger.debug(f"  Found {len(result_items)} potential listing elements")
 
@@ -444,18 +453,16 @@ class Scraper11880:
         """Check if there's a next page of results"""
         soup = BeautifulSoup(html, 'html.parser')
 
-        # Look for pagination elements
-        next_link = soup.select_one(
-            'a[class*="next"], a[rel="next"], '
-            '[class*="pagination"] a[href*="page="], '
-            '[class*="pager"] a[href*="page="]'
-        )
-
+        # Look for explicit "next" links
+        next_link = soup.select_one('a[class*="next"], a[rel="next"]')
         if next_link:
             return True
 
-        # Check if current page number link exists and there's a higher one
-        page_links = soup.select('[class*="pagination"] a[href*="page="], [class*="pager"] a[href*="page="]')
+        # Check if pagination contains any page number higher than current
+        page_links = soup.select(
+            '[class*="pagination"] a[href*="page="], '
+            '[class*="pager"] a[href*="page="]'
+        )
         max_page = current_page
         for link in page_links:
             href = link.get('href', '')
